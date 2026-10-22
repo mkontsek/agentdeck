@@ -101,8 +101,12 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     // Browser
     var url: String? = nil
     var browserProfileID: UUID = UUID()
+    var browserProfileMode: BrowserProfileMode = .shared
+    /// Set on the private browser AgentDeck opens beside a CLI session for its browser_* tools.
+    var agentOwnerID: UUID? = nil
 
     // UI / behaviour
+    var paneID: UUID = UUID()
     var fontSizeOverride: Double? = nil
     var paneSize: PaneSize? = nil
     var canvasPosition: PanePoint? = nil
@@ -116,12 +120,15 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     init(name: String, kind: SessionKind) {
         self.name = name
         self.kind = kind
+        paneID = id
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, kind, createdAt, cliProfileID, workingDirectory, worktreePath, worktreeBranch, worktreeRepo,
-             initialPrompt, url, browserProfileID, fontSizeOverride, paneSize, canvasPosition, zIndex, isOrchestrator,
-             autoInjectContext, autoStart
+            initialPrompt, url, browserProfileID, browserProfileMode, agentOwnerID, paneID, fontSizeOverride, paneSize,
+            canvasPosition,
+            zIndex, isOrchestrator,
+            autoInjectContext, autoStart
     }
 
     init(from decoder: Decoder) throws {
@@ -138,6 +145,9 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         initialPrompt = c.value(.initialPrompt, default: nil)
         url = c.value(.url, default: nil)
         browserProfileID = c.value(.browserProfileID, default: UUID())
+        browserProfileMode = c.value(.browserProfileMode, default: .shared)
+        agentOwnerID = c.value(.agentOwnerID, default: nil)
+        paneID = c.value(.paneID, default: id)
         fontSizeOverride = c.value(.fontSizeOverride, default: nil)
         paneSize = c.value(.paneSize, default: nil)
         canvasPosition = c.value(.canvasPosition, default: nil)
@@ -149,7 +159,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
 }
 
 /// Live, non-persisted state of a session.
-struct SessionRuntime {
+struct SessionRuntime: Equatable {
     var status: SessionStatus = .starting
     var statusSince: Date = Date()
     var lastOutputAt: Date? = nil
@@ -158,22 +168,23 @@ struct SessionRuntime {
     var exitCode: Int32? = nil
     var title: String? = nil
     var lastLines: [String] = []
-    var programState: String? = nil      // OSC 7501 state if the program reports one
+    var programState: String? = nil  // OSC 7501 state if the program reports one
     var programMessage: String? = nil
-    var modelName: String? = nil         // parsed from the CLI's own status line, best effort
-    var contextInfo: String? = nil       // e.g. "ctx 21%" or "63% context left"
+    var modelName: String? = nil  // parsed from the CLI's own status line, best effort
+    var contextInfo: String? = nil  // e.g. "ctx 21%" or "63% context left"
 
-    var lastContextHash: Int? = nil
-    var lastContextAt: Date? = nil
     var initialPromptSent: Bool = false
     var isRunning: Bool = false
     var generation: Int = 0
+    var injectionReadyAt: Date? = nil
 }
 
 // MARK: - Task board
 
 enum TaskStatus: String, Codable, CaseIterable, Identifiable {
-    case todo, inProgress = "in-progress", done, blocked
+    case todo
+    case inProgress = "in-progress"
+    case done, blocked
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -204,13 +215,22 @@ struct BoardTask: Codable, Identifiable, Hashable {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
-    init(id: Int, title: String, description: String = "", ownerSessionID: UUID? = nil, status: TaskStatus = .todo,
-         notes: String = "", createdBy: String = "user") {
-        self.id = id; self.title = title; self.description = description; self.ownerSessionID = ownerSessionID
-        self.status = status; self.notes = notes; self.createdBy = createdBy
+    init(
+        id: Int, title: String, description: String = "", ownerSessionID: UUID? = nil, status: TaskStatus = .todo,
+        notes: String = "", createdBy: String = "user"
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.ownerSessionID = ownerSessionID
+        self.status = status
+        self.notes = notes
+        self.createdBy = createdBy
     }
 
-    enum CodingKeys: String, CodingKey { case id, title, description, ownerSessionID, status, notes, createdBy, createdAt, updatedAt }
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, ownerSessionID, status, notes, createdBy, createdAt, updatedAt
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -238,7 +258,9 @@ struct LogEntry: Codable, Identifiable, Hashable {
     var level: LogLevel = .info
 
     init(source: String, message: String, level: LogLevel = .info) {
-        self.source = source; self.message = message; self.level = level
+        self.source = source
+        self.message = message
+        self.level = level
     }
 
     enum CodingKeys: String, CodingKey { case id, at, source, message, level }
@@ -266,25 +288,37 @@ struct CLIProfile: Codable, Identifiable, Hashable {
     var notes: String = ""
 
     static let builtins: [CLIProfile] = [
-        CLIProfile(id: "claude", name: "Claude Code",
-                   command: "claude --mcp-config \"{mcpConfigPath}\"",
-                   notes: "AgentDeck writes a per-session MCP config file; Claude loads it with --mcp-config."),
-        CLIProfile(id: "codex", name: "Codex",
-                   command: "codex -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
-                   notes: "Streamable HTTP MCP server injected via -c config override."),
-        CLIProfile(id: "gemini", name: "Gemini CLI",
-                   command: "gemini",
-                   notes: "Run once: gemini mcp add -t http -s user agentdeck {mcpUrl} (session identity is then weaker; use whoami/from_session)."),
-        CLIProfile(id: "opencode", name: "OpenCode",
-                   command: "opencode",
-                   notes: "Add the MCP server in opencode.json: {\"mcp\":{\"agentdeck\":{\"type\":\"remote\",\"url\":\"{mcpUrl}\"}}}"),
-        CLIProfile(id: "grok", name: "Grok CLI",
-                   command: "grok",
-                   notes: "Add the MCP server per the Grok CLI docs; URL is in $AGENTDECK_MCP_URL."),
-        CLIProfile(id: "shell", name: "Plain shell",
-                   command: "exec ${SHELL:-/bin/zsh} -l",
-                   supportsMCP: false,
-                   notes: "A login shell. $AGENTDECK_MCP_URL and $AGENTDECK_SESSION_ID are exported."),
+        CLIProfile(
+            id: "claude", name: "Claude Code",
+            command: "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\"",
+            notes: "AgentDeck writes a per-session MCP config file; Claude loads it with --mcp-config."),
+        CLIProfile(
+            id: "codex", name: "Codex",
+            command: "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+            notes: "Streamable HTTP MCP server injected via -c config override."),
+        CLIProfile(
+            id: "gemini", name: "Gemini CLI",
+            command: "gemini --yolo",
+            notes:
+                "Run once: gemini mcp add -t http -s user agentdeck {mcpUrl} (session identity is then weaker; use whoami/from_session)."
+        ),
+        CLIProfile(
+            id: "antigravity", name: "Antigravity",
+            command: "agy --dangerously-skip-permissions",
+            notes:
+                "Google Antigravity CLI. Install agy and sign in. Configure AgentDeck in /mcp using the session MCP URL. Image generation depends on your account and enabled tools."
+        ),
+        CLIProfile(
+            id: "grok", name: "Grok Build",
+            command: "grok --always-approve",
+            notes:
+                "Official Grok Build CLI (grok). Sign in, then configure AgentDeck with grok mcp using $AGENTDECK_MCP_URL."
+        ),
+        CLIProfile(
+            id: "shell", name: "Plain shell",
+            command: "exec ${SHELL:-/bin/zsh} -l",
+            supportsMCP: false,
+            notes: "A login shell. $AGENTDECK_MCP_URL and $AGENTDECK_SESSION_ID are exported."),
     ]
 }
 
@@ -339,14 +373,17 @@ struct RecruitRequest: Identifiable, Hashable {
 // MARK: - Settings
 
 struct AppSettings: Codable {
-    var globalFontSize: Double = 13
+    var sharedBrowserProfileID: UUID = UUID()
+    var openDefaultsWhenEmpty: Bool = true
+    var defaultWorkingDirectory: String = "~/gitrepos"
+    var skillDirectories: [String] = ["~/gitrepos", "~/.codex/skills"]
+    var disabledSkillIDs: [String] = []
+    var globalFontSize: Double = 11
     var fontName: String = "Menlo"
-    var defaultPanePreset: PaneSizePreset = .normal
+    var defaultPanePreset: PaneSizePreset = .compact
     var gridColumns: Int = 2
     var layoutMode: LayoutMode = .canvas
     var mcpPort: Int = 4820
-    var contextInjectionEnabled: Bool = true
-    var contextInjectionIntervalSeconds: Double = 300
     var idleAfterSeconds: Double = 4
     var stallAfterSeconds: Double = 90
     var worktreeRoot: String = "~/.agentdeck/worktrees"
@@ -359,22 +396,25 @@ struct AppSettings: Codable {
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, contextInjectionEnabled,
-             contextInjectionIntervalSeconds, idleAfterSeconds, stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector,
-             showBottomPanel, bottomPanelHeight
+        case sharedBrowserProfileID, openDefaultsWhenEmpty, defaultWorkingDirectory, skillDirectories, disabledSkillIDs
+        case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, idleAfterSeconds,
+            stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector, showBottomPanel, bottomPanelHeight
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppSettings()
+        sharedBrowserProfileID = c.value(.sharedBrowserProfileID, default: d.sharedBrowserProfileID)
+        openDefaultsWhenEmpty = c.value(.openDefaultsWhenEmpty, default: d.openDefaultsWhenEmpty)
+        defaultWorkingDirectory = c.value(.defaultWorkingDirectory, default: d.defaultWorkingDirectory)
+        skillDirectories = c.value(.skillDirectories, default: d.skillDirectories)
+        disabledSkillIDs = c.value(.disabledSkillIDs, default: d.disabledSkillIDs)
         globalFontSize = c.value(.globalFontSize, default: d.globalFontSize)
         fontName = c.value(.fontName, default: d.fontName)
         defaultPanePreset = c.value(.defaultPanePreset, default: d.defaultPanePreset)
         gridColumns = c.value(.gridColumns, default: d.gridColumns)
         layoutMode = c.value(.layoutMode, default: d.layoutMode)
         mcpPort = c.value(.mcpPort, default: d.mcpPort)
-        contextInjectionEnabled = c.value(.contextInjectionEnabled, default: d.contextInjectionEnabled)
-        contextInjectionIntervalSeconds = c.value(.contextInjectionIntervalSeconds, default: d.contextInjectionIntervalSeconds)
         idleAfterSeconds = c.value(.idleAfterSeconds, default: d.idleAfterSeconds)
         stallAfterSeconds = c.value(.stallAfterSeconds, default: d.stallAfterSeconds)
         worktreeRoot = c.value(.worktreeRoot, default: d.worktreeRoot)
@@ -387,6 +427,7 @@ struct AppSettings: Codable {
 }
 
 struct PersistedState: Codable {
+    var unrestrictedCLIDefaultsApplied: Bool = true
     var sessions: [ManagedSession] = []
     var tasks: [BoardTask] = []
     var nextTaskID: Int = 1
@@ -394,13 +435,18 @@ struct PersistedState: Codable {
     var settings: AppSettings = AppSettings()
     var cliProfiles: [CLIProfile] = CLIProfile.builtins
     var focusedSessionID: UUID? = nil
+    var selectedPaneTabs: [UUID: UUID] = [:]
 
     init() {}
 
-    enum CodingKeys: String, CodingKey { case sessions, tasks, nextTaskID, log, settings, cliProfiles, focusedSessionID }
+    enum CodingKeys: String, CodingKey {
+        case unrestrictedCLIDefaultsApplied, sessions, tasks, nextTaskID, log, settings, cliProfiles, focusedSessionID,
+            selectedPaneTabs
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        unrestrictedCLIDefaultsApplied = c.value(.unrestrictedCLIDefaultsApplied, default: false)
         sessions = c.lenientArray(.sessions)
         tasks = c.lenientArray(.tasks)
         nextTaskID = c.value(.nextTaskID, default: 1)
@@ -408,6 +454,7 @@ struct PersistedState: Codable {
         settings = c.value(.settings, default: AppSettings())
         cliProfiles = c.value(.cliProfiles, default: CLIProfile.builtins)
         focusedSessionID = c.value(.focusedSessionID, default: nil)
+        selectedPaneTabs = c.value(.selectedPaneTabs, default: [:])
     }
 }
 

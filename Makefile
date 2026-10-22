@@ -1,16 +1,29 @@
 APP=AgentDeck
+SHELL=/bin/bash
 DERIVED=build
 CONFIG?=Release
 APP_PATH=$(DERIVED)/Build/Products/$(CONFIG)/$(APP).app
 
-.PHONY: gen build run install clean icon
+.PHONY: gen build test lint format check run install clean icon
 
 gen:
 	xcodegen generate
 
 build: gen
-	xcodebuild -project $(APP).xcodeproj -scheme $(APP) -configuration $(CONFIG) \
+	set -o pipefail; xcodebuild -project $(APP).xcodeproj -scheme $(APP) -configuration $(CONFIG) \
 	  -derivedDataPath $(DERIVED) -destination "platform=macOS" -skipPackagePluginValidation -skipMacroValidation CODE_SIGN_IDENTITY=- build | tail -5
+
+test: gen
+	xcodebuild -project $(APP).xcodeproj -scheme $(APP) -configuration Debug \
+	  -derivedDataPath $(DERIVED) -destination "platform=macOS" -skipPackagePluginValidation -skipMacroValidation test
+
+lint:
+	xcrun swift-format lint --strict --recursive Sources Tests scripts
+
+format:
+	xcrun swift-format format --in-place --recursive Sources Tests scripts
+
+check: lint test build
 
 run: build
 	open $(APP_PATH)

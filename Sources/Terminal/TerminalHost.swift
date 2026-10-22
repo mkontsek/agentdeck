@@ -26,7 +26,7 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
     var onProgramStatus: ((UUID, String?, String?) -> Void)?
 
     func view(for id: UUID) -> DeckTerminalView? { views[id] }
-    func isRunning(_ id: UUID) -> Bool { views[id] != nil }
+    func isRunning(_ id: UUID) -> Bool { views[id]?.process?.running == true }
 
     private(set) var dark = true
 
@@ -38,7 +38,7 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
         v.processDelegate = self
         v.onFocus = { [weak self] in self?.onFocus?(id) }
         v.setProcessOutputHandler { [weak self] in
-            DispatchQueue.main.async { self?.onOutput?(id) }
+            Task { @MainActor [weak self] in self?.onOutput?(id) }
         }
         views[id] = v
         ids[ObjectIdentifier(v)] = id
@@ -48,8 +48,9 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
     func start(id: UUID, command: String, cwd: String, environment: [String: String], font: NSFont) {
         let v = makeView(for: id, font: font)
         let env = environment.map { "\($0.key)=\($0.value)" }
-        v.startProcess(executable: "/bin/zsh", args: ["-l", "-i", "-c", command], environment: env,
-                       execName: "-zsh", currentDirectory: cwd)
+        v.startProcess(
+            executable: "/bin/zsh", args: ["-l", "-i", "-c", command], environment: env,
+            execName: "-zsh", currentDirectory: cwd)
     }
 
     func terminate(id: UUID) {
@@ -60,9 +61,10 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
     /// Drop the view entirely (session removed or about to be restarted).
     func dispose(id: UUID) {
         guard let v = views[id] else { return }
+        ids[ObjectIdentifier(v)] = nil
+        v.processDelegate = nil
         v.terminate()
         v.removeFromSuperview()
-        ids[ObjectIdentifier(v)] = nil
         views[id] = nil
     }
 

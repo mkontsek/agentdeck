@@ -12,7 +12,7 @@ struct AgentDeckApp: App {
                 .environmentObject(store)
                 .frame(minWidth: 1000, minHeight: 640)
         }
-        .defaultSize(width: 1800, height: 1100)
+        .defaultSize(width: 1400, height: 900)
         .commands { AppCommands(store: store) }
 
         Settings {
@@ -39,8 +39,18 @@ struct AppCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Session…") { store.showNewSession = true }.keyboardShortcut("n", modifiers: .command)
+            Button("New CLI Tab") { store.addCLITab(to: store.focusedSessionID) }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(store.session(store.focusedSessionID)?.kind != .cli)
         }
         CommandMenu("Session") {
+            Button("Next Tab") { store.selectAdjacentTab(1) }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled((store.pane(containing: store.focusedSessionID)?.tabs.count ?? 0) < 2)
+            Button("Previous Tab") { store.selectAdjacentTab(-1) }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled((store.pane(containing: store.focusedSessionID)?.tabs.count ?? 0) < 2)
+            Divider()
             Button("Inject Note…") { store.showInjectSheet = true }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(store.session(store.focusedSessionID)?.kind != .cli)
@@ -53,15 +63,26 @@ struct AppCommands: Commands {
             Button("Remove Session") { if let id = store.focusedSessionID { store.removeSession(id) } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
             Divider()
-            Toggle("Orchestrator", isOn: Binding(
-                get: { store.session(store.focusedSessionID)?.isOrchestrator ?? false },
-                set: { v in if var s = store.session(store.focusedSessionID) { s.isOrchestrator = v; store.updateSession(s) } }))
+            Toggle(
+                "Orchestrator",
+                isOn: Binding(
+                    get: { store.session(store.focusedSessionID)?.isOrchestrator ?? false },
+                    set: { v in
+                        if var s = store.session(store.focusedSessionID) {
+                            s.isOrchestrator = v
+                            store.updateSession(s)
+                        }
+                    }))
         }
         CommandGroup(after: .toolbar) {
-            Button("Bigger Text") { store.adjustFont(for: store.focusedSessionID, by: 1) }.keyboardShortcut("+", modifiers: .command)
-            Button("Bigger Text (⌘=)") { store.adjustFont(for: store.focusedSessionID, by: 1) }.keyboardShortcut("=", modifiers: .command)
-            Button("Smaller Text") { store.adjustFont(for: store.focusedSessionID, by: -1) }.keyboardShortcut("-", modifiers: .command)
-            Button("Reset Text Size") { store.resetFont(for: store.focusedSessionID) }.keyboardShortcut("0", modifiers: .command)
+            Button("Bigger Text") { store.adjustFont(for: store.focusedSessionID, by: 1) }.keyboardShortcut(
+                "+", modifiers: .command)
+            Button("Bigger Text (⌘=)") { store.adjustFont(for: store.focusedSessionID, by: 1) }.keyboardShortcut(
+                "=", modifiers: .command)
+            Button("Smaller Text") { store.adjustFont(for: store.focusedSessionID, by: -1) }.keyboardShortcut(
+                "-", modifiers: .command)
+            Button("Reset Text Size") { store.resetFont(for: store.focusedSessionID) }.keyboardShortcut(
+                "0", modifiers: .command)
             Divider()
             Menu("Pane Size") {
                 ForEach(PaneSizePreset.allCases) { p in
@@ -72,9 +93,11 @@ struct AppCommands: Commands {
             }
             Button("Tidy Canvas") {
                 store.settings.layoutMode = .canvas
-                let w = NSApp.keyWindow?.frame.width ?? 1600
-                store.tidyCanvas(viewportWidth: w - (store.settings.showSidebar ? 240 : 0) - (store.settings.showInspector ? 300 : 0) - 16)
+                store.tidyCanvas(viewportWidth: store.canvasViewport.width)
             }.keyboardShortcut("t", modifiers: [.command, .option])
+            Button("Fill Canvas") { store.fillCanvas() }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(store.sessions.isEmpty || store.canvasViewport.width <= 0 || store.canvasViewport.height <= 0)
             Button(store.maximizedSessionID == nil ? "Maximize Pane" : "Restore Panes") {
                 store.maximizedSessionID = store.maximizedSessionID == nil ? store.focusedSessionID : nil
             }.keyboardShortcut("m", modifiers: [.command, .shift])
@@ -84,9 +107,12 @@ struct AppCommands: Commands {
             }
             Button("Toggle Light/Dark") { store.toggleTheme() }.keyboardShortcut("d", modifiers: [.command, .option])
             Divider()
-            Toggle("Show Sessions Sidebar", isOn: $store.settings.showSidebar).keyboardShortcut("s", modifiers: [.command, .option])
-            Toggle("Show Inspector", isOn: $store.settings.showInspector).keyboardShortcut("i", modifiers: [.command, .option])
-            Toggle("Show Task Board", isOn: $store.settings.showBottomPanel).keyboardShortcut("b", modifiers: [.command, .option])
+            Toggle("Show Sessions Sidebar", isOn: $store.settings.showSidebar).keyboardShortcut(
+                "s", modifiers: [.command, .option])
+            Toggle("Show Inspector", isOn: $store.settings.showInspector).keyboardShortcut(
+                "i", modifiers: [.command, .option])
+            Toggle("Show Task Board", isOn: $store.settings.showBottomPanel).keyboardShortcut(
+                "b", modifiers: [.command, .option])
             Picker("Layout", selection: $store.settings.layoutMode) {
                 ForEach(LayoutMode.allCases) { Text($0.label).tag($0) }
             }

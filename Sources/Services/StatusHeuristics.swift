@@ -12,7 +12,10 @@ enum StatusHeuristics {
         #"(?i)\bdo you want to\b"#, #"(?i)\bwould you like to\b"#, #"(?i)\bpress enter to\b"#,
         #"(?i)\bapprove\?"#, #"(?i)\ballow\b.*\?"#, #"(?i)\bchoose an option\b"#, #"(?i)\bselect an option\b"#,
         #"(?i)^\s*(❯|>)?\s*1\.\s*yes\b"#, #"(?i)\bconfirm\b.*\?\s*$"#, #"(?i)\benter .* to continue\b"#,
-        #"(?i)\bproceed\?"#, #"(?i)\benter to confirm\b"#, #"(?i)\bspace to select\b"#, #"(?i)\bselect any\b"#, #"(?i)\bwish to enable\b"#, #"(?i)\benable selected\b"#, #"(?i)\btrust\b.*\?"#, #"(?i)\byes, (proceed|i trust|allow)\b"#, #"(?i)waiting for (your )?(input|approval|confirmation)"#, #"(?i)\brequires? (your )?approval\b"#,
+        #"(?i)\bproceed\?"#, #"(?i)\benter to confirm\b"#, #"(?i)\bspace to select\b"#, #"(?i)\bselect any\b"#,
+        #"(?i)\bwish to enable\b"#, #"(?i)\benable selected\b"#, #"(?i)\btrust\b.*\?"#,
+        #"(?i)\byes, (proceed|i trust|allow)\b"#, #"(?i)waiting for (your )?(input|approval|confirmation)"#,
+        #"(?i)\brequires? (your )?approval\b"#,
     ])
 
     static let busy = compile([
@@ -35,7 +38,7 @@ enum StatusHeuristics {
     ])
 
     static let modelName = compile([
-        #"(?i)\b(claude[- ][a-z0-9.-]+|fable(?: ?\d[\d.]*)?|opus(?: ?\d[\d.]*)?|sonnet(?: ?\d[\d.]*)?|haiku(?: ?\d[\d.]*)?|gpt-[a-z0-9.-]+|o[134](?:-[a-z0-9-]+)?|gemini-[a-z0-9.-]+|grok-[a-z0-9.-]+|codex-[a-z0-9.-]+|kimi[- ][a-z0-9.-]+|deepseek[- ][a-z0-9.-]+)\b"#,
+        #"(?i)\b(claude[- ][a-z0-9.-]+|fable(?: ?\d[\d.]*)?|opus(?: ?\d[\d.]*)?|sonnet(?: ?\d[\d.]*)?|haiku(?: ?\d[\d.]*)?|gpt-[a-z0-9.-]+|o[134](?:-[a-z0-9-]+)?|gemini-[a-z0-9.-]+|grok-[a-z0-9.-]+|codex-[a-z0-9.-]+|kimi[- ][a-z0-9.-]+|deepseek[- ][a-z0-9.-]+)\b"#
     ])
 
     /// Best-effort model statistics scraped from the CLI's own status line (bottom rows of the screen).
@@ -70,15 +73,19 @@ enum StatusHeuristics {
         var pendingQuestion: String?
     }
 
-    static func evaluate(lines: [String], lastOutputAt: Date?, startedAt: Date?, settings: AppSettings,
-                         programState: String?, now: Date = Date()) -> Evaluation {
+    static func evaluate(
+        lines: [String], lastOutputAt: Date?, startedAt: Date?, settings: AppSettings,
+        programState: String?, now: Date = Date()
+    ) -> Evaluation {
         let tail = Array(lines.suffix(12))
         let quiet = now.timeIntervalSince(lastOutputAt ?? startedAt ?? now)
 
         // Programs that speak OSC 7501 are authoritative.
         if let ps = programState {
             switch ps {
-            case "working": return Evaluation(status: quiet > settings.stallAfterSeconds ? .stalled : .working, pendingQuestion: nil)
+            case "working":
+                return Evaluation(
+                    status: quiet > settings.stallAfterSeconds ? .stalled : .working, pendingQuestion: nil)
             case "blocked": return Evaluation(status: .waitingForUser, pendingQuestion: firstMatch(question, in: tail))
             case "error": return Evaluation(status: .error, pendingQuestion: nil)
             case "idle", "done": return Evaluation(status: .idle, pendingQuestion: nil)

@@ -6,7 +6,14 @@ struct BrowserPaneView: View {
     let session: ManagedSession
 
     var body: some View {
-        BrowserInner(controller: store.browsers.controller(for: session))
+        if store.runtime[session.id]?.isRunning == true,
+            let controller = store.browsers.controllers[session.id]
+        {
+            BrowserInner(controller: controller)
+        } else {
+            Button("Start browser") { store.restartSession(session.id) }
+                .buttonStyle(.borderedProminent)
+        }
     }
 }
 
@@ -16,9 +23,19 @@ private struct BrowserInner: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                Button { controller.webView.goBack() } label: { Image(systemName: "chevron.left") }.disabled(!controller.canGoBack)
-                Button { controller.webView.goForward() } label: { Image(systemName: "chevron.right") }.disabled(!controller.canGoForward)
-                Button { if controller.isLoading { controller.webView.stopLoading() } else { controller.webView.reload() } } label: {
+                Button {
+                    controller.webView.goBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }.disabled(!controller.canGoBack)
+                Button {
+                    controller.webView.goForward()
+                } label: {
+                    Image(systemName: "chevron.right")
+                }.disabled(!controller.canGoForward)
+                Button {
+                    if controller.isLoading { controller.webView.stopLoading() } else { controller.webView.reload() }
+                } label: {
                     Image(systemName: controller.isLoading ? "xmark" : "arrow.clockwise")
                 }
                 TextField("URL", text: $controller.urlText)

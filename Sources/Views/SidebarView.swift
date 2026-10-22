@@ -23,11 +23,16 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             Divider()
             HStack(spacing: 6) {
-                Circle().fill(store.mcpStatus.hasPrefix("listening") ? Color.green : Color.red).frame(width: 7, height: 7)
+                Circle().fill(store.mcpStatus.hasPrefix("listening") ? Color.green : Color.red).frame(
+                    width: 7, height: 7)
                 Text("MCP " + (store.mcpStatus.hasPrefix("listening") ? ":\(store.settings.mcpPort)" : store.mcpStatus))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button { store.showNewSession = true } label: { Image(systemName: "plus") }.buttonStyle(.borderless)
+                Button {
+                    store.showNewSession = true
+                } label: {
+                    Image(systemName: "plus")
+                }.buttonStyle(.borderless)
             }
             .padding(8)
         }
@@ -38,20 +43,34 @@ struct SidebarView: View {
         Button("Restart") { store.restartSession(s.id) }
         Button("Stop") { store.stopSession(s.id) }
         if s.kind == .cli {
-            Button("Inject Note…") { store.focusedSessionID = s.id; store.showInjectSheet = true }
+            Button("New CLI Tab") { store.addCLITab(to: s.id) }
+            Button("Inject Note…") {
+                store.focusedSessionID = s.id
+                store.showInjectSheet = true
+            }
             Button("Inject Context Now") { store.injectContextNow(s.id) }
         }
         Button(store.maximizedSessionID == s.id ? "Restore Panes" : "Maximize") {
             store.maximizedSessionID = store.maximizedSessionID == s.id ? nil : s.id
         }
-        Toggle("Orchestrator", isOn: Binding(get: { s.isOrchestrator }, set: { v in var n = s; n.isOrchestrator = v; store.updateSession(n) }))
+        Toggle(
+            "Orchestrator",
+            isOn: Binding(
+                get: { s.isOrchestrator },
+                set: { v in
+                    var n = s
+                    n.isOrchestrator = v
+                    store.updateSession(n)
+                }))
         Divider()
         Button("Remove", role: .destructive) { store.removeSession(s.id) }
         if s.worktreePath != nil {
             Button("Remove + Delete Worktree", role: .destructive) { store.removeSession(s.id, deleteWorktree: true) }
         }
-        if s.kind == .browser {
-            Button("Remove + Delete Browser Profile", role: .destructive) { store.removeSession(s.id, deleteBrowserProfile: true) }
+        if s.kind == .browser, s.browserProfileMode == .isolated {
+            Button("Remove + Delete Browser Profile", role: .destructive) {
+                store.removeSession(s.id, deleteBrowserProfile: true)
+            }
         }
     }
 }
@@ -67,7 +86,9 @@ struct SessionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(session.name).fontWeight(.medium).lineLimit(1)
-                    if session.isOrchestrator { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.yellow) }
+                    if session.isOrchestrator {
+                        Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.yellow)
+                    }
                 }
                 HStack(spacing: 4) {
                     Image(systemName: session.kind.systemImage).font(.caption2)
@@ -95,11 +116,14 @@ struct RecruitRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(request.requestedByName) wants “\(request.name)”").fontWeight(.medium)
-            Text("\(request.kind.label)\(request.kind == .cli ? " · \(request.cliProfileID) · \(request.workingDirectory.abbreviatingHome)" : "")\(request.useWorktree ? " · worktree" : "")")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(
+                "\(request.kind.label)\(request.kind == .cli ? " · \(request.cliProfileID) · \(request.workingDirectory.abbreviatingHome)" : "")\(request.useWorktree ? " · worktree" : "")"
+            )
+            .font(.caption).foregroundStyle(.secondary)
             if !request.reason.isEmpty { Text(request.reason).font(.caption).lineLimit(3) }
             HStack {
-                Button("Approve") { store.approveRecruit(request.id) }.buttonStyle(.borderedProminent).controlSize(.small)
+                Button("Approve") { store.approveRecruit(request.id) }.buttonStyle(.borderedProminent).controlSize(
+                    .small)
                 Button("Deny") { store.denyRecruit(request.id) }.controlSize(.small)
             }
         }

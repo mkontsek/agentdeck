@@ -23,8 +23,8 @@ targets:
       properties:
         CFBundleName: AgentDeck
         CFBundleDisplayName: AgentDeck
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.1.7"
+        CFBundleVersion: "0.1.7"
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "MIT"
@@ -36,7 +36,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.kontsek.agentdeck
         PRODUCT_NAME: AgentDeck
         SWIFT_VERSION: "5.0"
-        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_STRICT_CONCURRENCY: complete
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
@@ -44,6 +44,38 @@ targets:
         ENABLE_HARDENED_RUNTIME: false
         ENABLE_APP_SANDBOX: false
         GENERATE_INFOPLIST_FILE: false
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.7"
+        CURRENT_PROJECT_VERSION: "0.1.7"
         COMBINE_HIDPI_IMAGES: true
+  AgentDeckTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: Sources/Models
+      - path: Sources/Services
+      - path: Sources/MCP
+      - path: Sources/Store
+      - path: Sources/Terminal/TerminalHost.swift
+      - path: Sources/Terminal/TerminalPaneView.swift
+      - path: Sources/Browser/BrowserHost.swift
+      - path: Sources/Browser/BrowserPaneView.swift
+      - path: Sources/Browser/BrowserAutomation.swift
+      - path: Sources/Browser/BrowserScripts.swift
+      - path: Sources/Views/PaneFocusOverlay.swift
+    dependencies:
+      - package: SwiftTerm
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  AgentDeck:
+    build:
+      targets:
+        AgentDeck: all
+    test:
+      targets:
+        - AgentDeckTests

@@ -1,99 +1,130 @@
-// Renders the AgentDeck app icon: a cascade of terminal mini-windows on a gradient squircle.
-// Usage: swift scripts/make-icon.swift <out.png>   (1024×1024)
+// Renders AgentDeck's stacked-card mark on the macOS icon grid.
+// Usage: swift scripts/make-icon.swift <out.png> (1024×1024, transparent margins)
 import AppKit
 
-let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon.png"
-let S = 1024
-let cs = CGColorSpace(name: CGColorSpace.sRGB)!
-let ctx = CGContext(data: nil, width: S, height: S, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-let gc = NSGraphicsContext(cgContext: ctx, flipped: false)
-NSGraphicsContext.current = gc
-
-func rgb(_ r: Double, _ g: Double, _ b: Double, _ a: Double = 1) -> NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: a) }
-func hex(_ h: UInt32, _ a: Double = 1) -> NSColor {
-    rgb(Double((h >> 16) & 0xff) / 255, Double((h >> 8) & 0xff) / 255, Double(h & 0xff) / 255, a)
+private enum IconRenderError: Error {
+    case unavailableColorSpace, unavailableContext, unavailableGradient, unavailableImage
 }
 
-// Background squircle (macOS icon grid: 824 pt centred on a 1024 canvas)
-let bgRect = NSRect(x: 100, y: 100, width: 824, height: 824)
-let bg = NSBezierPath(roundedRect: bgRect, xRadius: 186, yRadius: 186)
-NSGraphicsContext.saveGraphicsState()
-let shadow = NSShadow(); shadow.shadowColor = hex(0x000000, 0.35); shadow.shadowBlurRadius = 30; shadow.shadowOffset = NSSize(width: 0, height: -14)
-shadow.set()
-hex(0x14172B).setFill(); bg.fill()
-NSGraphicsContext.restoreGraphicsState()
-NSGradient(colorsAndLocations: (hex(0x5B5FEF), 0.0), (hex(0x2E2FB0), 0.55), (hex(0x121433), 1.0))!.draw(in: bg, angle: -62)
-// soft glow top-left
-NSGraphicsContext.saveGraphicsState()
-bg.addClip()
-NSGradient(colors: [hex(0x8DE0FF, 0.35), hex(0x8DE0FF, 0.0)])!.draw(fromCenter: NSPoint(x: 300, y: 780), radius: 0,
-                                                                     toCenter: NSPoint(x: 300, y: 780), radius: 520, options: [])
-NSGraphicsContext.restoreGraphicsState()
+private func color(_ value: UInt32, alpha: CGFloat = 1) -> NSColor {
+    NSColor(
+        srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+        green: CGFloat((value >> 8) & 0xff) / 255,
+        blue: CGFloat(value & 0xff) / 255, alpha: alpha)
+}
 
-// Terminal cards cascading from back (upper-left) to front (lower-right)
-struct Card { var origin: NSPoint; var alpha: Double; var front: Bool }
-let cardSize = NSSize(width: 520, height: 372)
-let cards = [Card(origin: NSPoint(x: 176, y: 352), alpha: 0.55, front: false),
-             Card(origin: NSPoint(x: 220, y: 302), alpha: 0.8, front: false),
-             Card(origin: NSPoint(x: 264, y: 252), alpha: 1.0, front: true)]
-let titleH: CGFloat = 52
-
-for c in cards {
-    let r = NSRect(origin: c.origin, size: cardSize)
-    let path = NSBezierPath(roundedRect: r, xRadius: 34, yRadius: 34)
+private func withGraphicsState(_ drawing: () throws -> Void) rethrows {
     NSGraphicsContext.saveGraphicsState()
-    let sh = NSShadow(); sh.shadowColor = hex(0x000000, 0.45); sh.shadowBlurRadius = 26; sh.shadowOffset = NSSize(width: 0, height: -10)
-    sh.set()
-    hex(0x0C0E17, c.alpha).setFill(); path.fill()
-    NSGraphicsContext.restoreGraphicsState()
-    // title bar
-    NSGraphicsContext.saveGraphicsState()
-    path.addClip()
-    hex(0x262A3D, c.alpha).setFill()
-    NSRect(x: r.minX, y: r.maxY - titleH, width: r.width, height: titleH).fill()
-    hex(0xFFFFFF, 0.08 * c.alpha).setFill()
-    NSRect(x: r.minX, y: r.maxY - titleH - 2, width: r.width, height: 2).fill()
-    NSGraphicsContext.restoreGraphicsState()
-    // traffic lights
-    for (i, col) in [0xFF5F57, 0xFEBC2E, 0x28C840].enumerated() {
-        hex(UInt32(col), c.alpha).setFill()
-        NSBezierPath(ovalIn: NSRect(x: r.minX + 30 + CGFloat(i) * 30, y: r.maxY - titleH / 2 - 9, width: 18, height: 18)).fill()
-    }
-    // border
-    hex(0xFFFFFF, 0.10 * c.alpha).setStroke(); path.lineWidth = 2; path.stroke()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    try drawing()
+}
 
-    if c.front {
-        // prompt line
-        let font = NSFont.monospacedSystemFont(ofSize: 128, weight: .bold)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: hex(0x5AF78E)]
-        NSAttributedString(string: "❯", attributes: attrs).draw(at: NSPoint(x: r.minX + 46, y: r.minY + 118))
-        // blinking cursor block
-        hex(0xE6E8F0).setFill()
-        NSRect(x: r.minX + 150, y: r.minY + 126, width: 54, height: 118).fill()
-        // faint second line (output)
-        hex(0x8E93A8, 0.6).setFill()
-        NSRect(x: r.minX + 46, y: r.minY + 60, width: 220, height: 20).fill()
-        hex(0x8E93A8, 0.35).setFill()
-        NSRect(x: r.minX + 290, y: r.minY + 60, width: 120, height: 20).fill()
-    } else {
-        // dim content lines
-        hex(0x8E93A8, 0.35 * c.alpha).setFill()
-        NSRect(x: r.minX + 46, y: r.maxY - titleH - 70, width: 180, height: 18).fill()
+private func gradient(_ colors: [NSColor], in path: NSBezierPath, angle: CGFloat) throws {
+    guard let gradient = NSGradient(colors: colors) else { throw IconRenderError.unavailableGradient }
+    gradient.draw(in: path, angle: angle)
+}
+
+private func shadowedFill(
+    _ path: NSBezierPath, fill: NSColor, opacity: CGFloat, blur: CGFloat, offset: CGFloat
+) {
+    withGraphicsState {
+        let shadow = NSShadow()
+        shadow.shadowColor = color(0x102D38, alpha: opacity)
+        shadow.shadowBlurRadius = blur
+        shadow.shadowOffset = NSSize(width: 0, height: offset)
+        shadow.set()
+        fill.setFill()
+        path.fill()
     }
 }
 
-// Status beacons (sessions talking to the deck): three dots bottom-right
-for (i, col) in [0x28C840, 0x3A8DFF, 0xFFA629].enumerated() {
-    let p = NSPoint(x: 700 + CGFloat(i) * 52, y: 196)
-    NSGraphicsContext.saveGraphicsState()
-    let sh = NSShadow(); sh.shadowColor = hex(UInt32(col), 0.9); sh.shadowBlurRadius = 18; sh.set()
-    hex(UInt32(col)).setFill()
-    NSBezierPath(ovalIn: NSRect(x: p.x - 13, y: p.y - 13, width: 26, height: 26)).fill()
-    NSGraphicsContext.restoreGraphicsState()
+private func drawCard(center: NSPoint, angle: CGFloat, colors: [NSColor], foreground: Bool = false) throws {
+    try withGraphicsState {
+        let transform = NSAffineTransform()
+        transform.translateX(by: center.x, yBy: center.y)
+        transform.rotate(byDegrees: angle)
+        transform.concat()
+
+        let rect = NSRect(x: -272, y: -188, width: 544, height: 376)
+        let card = NSBezierPath(roundedRect: rect, xRadius: 58, yRadius: 58)
+        shadowedFill(card, fill: colors[0], opacity: foreground ? 0.28 : 0.12, blur: 30, offset: -14)
+        try gradient(colors, in: card, angle: -75)
+
+        // Fine inset rim catches light without adding a miniature window toolbar.
+        let rim = NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 56, yRadius: 56)
+        color(0xFFFFFF, alpha: foreground ? 0.16 : 0.55).setStroke()
+        rim.lineWidth = 2
+        rim.stroke()
+
+        if foreground {
+            let prompt = NSBezierPath()
+            prompt.move(to: NSPoint(x: -132, y: 62))
+            prompt.line(to: NSPoint(x: -60, y: 0))
+            prompt.line(to: NSPoint(x: -132, y: -62))
+            prompt.lineWidth = 38
+            prompt.lineCapStyle = .round
+            prompt.lineJoinStyle = .round
+            color(0xF4FFFC).setStroke()
+            prompt.stroke()
+
+            let cursor = NSBezierPath(
+                roundedRect: NSRect(x: 12, y: -81, width: 118, height: 38), xRadius: 19, yRadius: 19)
+            color(0x78EAC7).setFill()
+            cursor.fill()
+        }
+    }
 }
 
-let img = ctx.makeImage()!
-let rep = NSBitmapImageRep(cgImage: img)
-try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
-print("wrote \(out)")
+private func renderIcon(to destination: URL) throws {
+    let size = 1024
+    guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+        throw IconRenderError.unavailableColorSpace
+    }
+    guard
+        let context = CGContext(
+            data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { throw IconRenderError.unavailableContext }
+
+    let previousContext = NSGraphicsContext.current
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+    defer { NSGraphicsContext.current = previousContext }
+    context.setAllowsAntialiasing(true)
+    context.setShouldAntialias(true)
+
+    let background = NSBezierPath(
+        roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824), xRadius: 184, yRadius: 184)
+    shadowedFill(background, fill: color(0xE7EFEF), opacity: 0.19, blur: 22, offset: -10)
+    try gradient([color(0xD8E7E9), color(0xFAFCF9)], in: background, angle: 90)
+
+    try withGraphicsState {
+        background.addClip()
+        guard let glow = NSGradient(colors: [color(0xFFFFFF, alpha: 0.9), color(0xFFFFFF, alpha: 0)]) else {
+            throw IconRenderError.unavailableGradient
+        }
+        glow.draw(
+            fromCenter: NSPoint(x: 310, y: 820), radius: 0,
+            toCenter: NSPoint(x: 310, y: 820), radius: 650, options: [])
+    }
+    let edge = NSBezierPath(
+        roundedRect: NSRect(x: 102, y: 102, width: 820, height: 820), xRadius: 182, yRadius: 182)
+    color(0xFFFFFF, alpha: 0.8).setStroke()
+    edge.lineWidth = 2
+    edge.stroke()
+
+    // Three distinct planes communicate the deck; the generous glyph survives downsampling.
+    try drawCard(center: NSPoint(x: 530, y: 610), angle: 11, colors: [color(0xB4F4DF), color(0xD5FCEC)])
+    try drawCard(center: NSPoint(x: 514, y: 542), angle: 2, colors: [color(0x37B8A4), color(0x70DFBE)])
+    try drawCard(
+        center: NSPoint(x: 500, y: 466), angle: -9,
+        colors: [color(0x102832), color(0x244653)], foreground: true)
+
+    guard let image = context.makeImage(),
+        let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+    else { throw IconRenderError.unavailableImage }
+    try png.write(to: destination, options: .atomic)
+}
+
+let output = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon.png"
+try renderIcon(to: URL(fileURLWithPath: output))
+print("wrote \(output)")

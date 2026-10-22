@@ -15,9 +15,16 @@ struct BottomPanelView: View {
                 .pickerStyle(.segmented).frame(width: 240)
                 Spacer()
                 if tab == 0 {
-                    Button { editing = BoardTask(id: 0, title: "") } label: { Label("Add Task", systemImage: "plus") }
+                    Button {
+                        editing = BoardTask(id: 0, title: "")
+                    } label: {
+                        Label("Add Task", systemImage: "plus")
+                    }
                 } else {
-                    Button("Clear log") { store.log.removeAll(); store.scheduleSave() }
+                    Button("Clear log") {
+                        store.log.removeAll()
+                        store.scheduleSave()
+                    }
                 }
             }
             .padding(6)
@@ -37,23 +44,45 @@ struct TaskBoardView: View {
         Table(store.tasks, selection: $selection) {
             TableColumn("#") { t in Text("\(t.id)").foregroundStyle(.secondary) }.width(32)
             TableColumn("Status") { t in
-                Picker("", selection: Binding(get: { t.status }, set: { v in var n = t; n.status = v; store.updateTask(n) })) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { t.status },
+                        set: { v in
+                            var n = t
+                            n.status = v
+                            store.updateTask(n)
+                        })
+                ) {
                     ForEach(TaskStatus.allCases) { Label($0.label, systemImage: $0.systemImage).tag($0) }
                 }.labelsHidden()
             }.width(120)
             TableColumn("Title") { t in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(t.title).strikethrough(t.status == .done)
-                    if !t.description.isEmpty { Text(t.description).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    if !t.description.isEmpty {
+                        Text(t.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
             }
             TableColumn("Owner") { t in
-                Picker("", selection: Binding(get: { t.ownerSessionID }, set: { v in var n = t; n.ownerSessionID = v; store.updateTask(n) })) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { t.ownerSessionID },
+                        set: { v in
+                            var n = t
+                            n.ownerSessionID = v
+                            store.updateTask(n)
+                        })
+                ) {
                     Text("Unassigned").tag(UUID?.none)
                     ForEach(store.sessions) { s in Text(s.name).tag(UUID?.some(s.id)) }
                 }.labelsHidden()
             }.width(140)
-            TableColumn("Notes") { t in Text(t.notes.components(separatedBy: "\n").last ?? "").font(.caption).lineLimit(1) }
+            TableColumn("Notes") { t in
+                Text(t.notes.components(separatedBy: "\n").last ?? "").font(.caption).lineLimit(1)
+            }
             TableColumn("By") { t in Text(t.createdBy).font(.caption).foregroundStyle(.secondary) }.width(80)
         }
         .contextMenu(forSelectionType: Int.self) { ids in
@@ -61,7 +90,10 @@ struct TaskBoardView: View {
             Menu("Hand off to") {
                 ForEach(store.sessions.filter { $0.kind == .cli }) { s in
                     Button(s.name) {
-                        for id in ids { _ = try? store.handoff(from: nil, to: s, taskID: id, title: nil, description: nil, note: nil) }
+                        for id in ids {
+                            _ = try? store.handoff(
+                                from: nil, to: s, taskID: id, title: nil, description: nil, note: nil)
+                        }
                     }
                 }
             }
@@ -98,14 +130,22 @@ struct TaskEditorSheet: View {
                 }
             }
             HStack {
-                if task.id != 0 { Button("Delete", role: .destructive) { store.deleteTask(task.id); dismiss() } }
+                if task.id != 0 {
+                    Button("Delete", role: .destructive) {
+                        store.deleteTask(task.id)
+                        dismiss()
+                    }
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(task.id == 0 ? "Create" : "Save") {
                     if task.id == 0 {
-                        store.createTask(title: task.title, description: task.description, owner: task.ownerSessionID,
-                                         status: task.status, notes: task.notes)
-                    } else { store.updateTask(task) }
+                        store.createTask(
+                            title: task.title, description: task.description, owner: task.ownerSessionID,
+                            status: task.status, notes: task.notes)
+                    } else {
+                        store.updateTask(task)
+                    }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction).disabled(task.title.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -117,7 +157,11 @@ struct TaskEditorSheet: View {
 
 struct LogView: View {
     @EnvironmentObject var store: AppStore
-    private static let fmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
+    private static let fmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     var body: some View {
         List(Array(store.log.reversed())) { e in
