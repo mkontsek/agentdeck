@@ -1,0 +1,47 @@
+name: AgentDeck
+options:
+  bundleIdPrefix: io.kontsek
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.99.1
+targets:
+  AgentDeck:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: SwiftTerm
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleName: AgentDeck
+        CFBundleDisplayName: AgentDeck
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: "MIT"
+        NSSupportsAutomaticTermination: false
+        NSSupportsSuddenTermination: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.kontsek.agentdeck
+        PRODUCT_NAME: AgentDeck
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: false
+        ENABLE_APP_SANDBOX: false
+        GENERATE_INFOPLIST_FILE: false
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: true
