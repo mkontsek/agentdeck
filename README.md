@@ -204,6 +204,7 @@ my-agent --mcp-http agentdeck={mcpUrl} --name "{sessionName}"
 | `Sources/MCP` | loopback HTTP server, JSON-RPC routing, tool definitions |
 | `Sources/Services` | status heuristics, git worktree helpers |
 | `Sources/Views` | sidebar, pane grid, board, log, inspector, sheets, settings |
+| `scripts/make-icon.swift` | renders the app icon; `make icon` rebuilds `Resources/AppIcon.icns` |
 | `~/Library/Application Support/AgentDeck/` | `state.json`, per-session `mcp/*.json` |
 | `~/.agentdeck/worktrees/` | default worktree root (Settings) |
 

@@ -15,6 +15,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources/AppIcon.icns
     dependencies:
       - package: SwiftTerm
     info:
@@ -29,6 +30,7 @@ targets:
         NSHumanReadableCopyright: "MIT"
         NSSupportsAutomaticTermination: false
         NSSupportsSuddenTermination: false
+        CFBundleIconFile: AppIcon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.kontsek.agentdeck
