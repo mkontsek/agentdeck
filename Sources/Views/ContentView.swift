@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 extension SessionStatus {
@@ -20,8 +21,10 @@ struct ContentView: View {
 
     var body: some View {
         HSplitView {
-            SidebarView()
-                .frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
+            if store.settings.showSidebar {
+                SidebarView()
+                    .frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
+            }
             VSplitView {
                 PaneGridView()
                     .frame(minHeight: 220)
@@ -44,21 +47,43 @@ struct ContentView: View {
         } message: { Text(store.lastError ?? "") }
     }
 
+    private func tidy() {
+        let width = canvasWidth()
+        store.tidyCanvas(viewportWidth: width)
+    }
+
+    private func canvasWidth() -> Double {
+        let w = NSApp.keyWindow?.frame.width ?? 1600
+        return w - (store.settings.showSidebar ? 240 : 0) - (store.settings.showInspector ? 300 : 0) - 16
+    }
+
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
+        ToolbarItemGroup(placement: .navigation) {
+            Toggle(isOn: $store.settings.showSidebar) { Image(systemName: "sidebar.leading") }
+                .help("Sessions sidebar (⌥⌘S)")
             Button { store.showNewSession = true } label: { Label("New Session", systemImage: "plus") }
                 .help("New session (⌘N)")
+            let pending = store.recruits.filter { $0.status == .pending }.count
+            if pending > 0 {
+                Button { store.settings.showSidebar = true } label: {
+                    Label("\(pending) approval\(pending == 1 ? "" : "s")", systemImage: "person.badge.clock")
+                }
+                .tint(.orange).help("An orchestrator wants to recruit a session; open the sidebar to approve or deny")
+            }
         }
         ToolbarItemGroup(placement: .principal) {
             Picker("Layout", selection: $store.settings.layoutMode) {
                 Image(systemName: "square.grid.2x2").tag(LayoutMode.grid)
-                Image(systemName: "rectangle.3.group").tag(LayoutMode.freeform)
+                Image(systemName: "macwindow.on.rectangle").tag(LayoutMode.canvas)
             }
-            .pickerStyle(.segmented).help("Grid tiles panes evenly; Freeform uses per-pane sizes")
+            .pickerStyle(.segmented).help("Grid tiles panes evenly; Canvas gives every pane its own movable mini-window")
             if store.settings.layoutMode == .grid {
                 Stepper("\(store.settings.gridColumns) col", value: $store.settings.gridColumns, in: 1...4)
                     .help("Grid columns")
+            } else {
+                Button { tidy() } label: { Label("Tidy", systemImage: "rectangle.grid.2x2") }
+                    .help("Re-pack the mini-windows left to right (⌥⌘T)")
             }
             Picker("Pane size", selection: $store.settings.defaultPanePreset) {
                 ForEach(PaneSizePreset.allCases) { Text($0.label).tag($0) }
@@ -71,6 +96,14 @@ struct ContentView: View {
             }.help("Global terminal font size (per-pane overrides in the pane header)")
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            Button { store.toggleTheme() } label: {
+                Image(systemName: store.isDarkTheme ? "sun.max" : "moon")
+            }
+            .help("Toggle light/dark theme (⌥⌘D) · System/Light/Dark in Settings")
+            let up = store.mcpStatus.hasPrefix("listening")
+            Image(systemName: up ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                .foregroundStyle(up ? Color.green : Color.red)
+                .help("MCP server " + store.mcpStatus)
             Toggle(isOn: $store.settings.showBottomPanel) { Image(systemName: "rectangle.bottomthird.inset.filled") }
                 .help("Task board & log (⌥⌘B)")
             Toggle(isOn: $store.settings.showInspector) { Image(systemName: "sidebar.trailing") }

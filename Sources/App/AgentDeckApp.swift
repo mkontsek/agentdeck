@@ -12,7 +12,7 @@ struct AgentDeckApp: App {
                 .environmentObject(store)
                 .frame(minWidth: 1000, minHeight: 640)
         }
-        .defaultSize(width: 1500, height: 950)
+        .defaultSize(width: 1800, height: 1100)
         .commands { AppCommands(store: store) }
 
         Settings {
@@ -70,10 +70,21 @@ struct AppCommands: Commands {
                 Button("Reset to Default") { if let id = store.focusedSessionID { store.setPaneSize(for: id, nil) } }
                     .keyboardShortcut("0", modifiers: [.command, .option])
             }
+            Button("Tidy Canvas") {
+                store.settings.layoutMode = .canvas
+                let w = NSApp.keyWindow?.frame.width ?? 1600
+                store.tidyCanvas(viewportWidth: w - (store.settings.showSidebar ? 240 : 0) - (store.settings.showInspector ? 300 : 0) - 16)
+            }.keyboardShortcut("t", modifiers: [.command, .option])
             Button(store.maximizedSessionID == nil ? "Maximize Pane" : "Restore Panes") {
                 store.maximizedSessionID = store.maximizedSessionID == nil ? store.focusedSessionID : nil
             }.keyboardShortcut("m", modifiers: [.command, .shift])
             Divider()
+            Picker("Appearance", selection: $store.settings.appearance) {
+                ForEach(AppAppearance.allCases) { Label($0.label, systemImage: $0.systemImage).tag($0) }
+            }
+            Button("Toggle Light/Dark") { store.toggleTheme() }.keyboardShortcut("d", modifiers: [.command, .option])
+            Divider()
+            Toggle("Show Sessions Sidebar", isOn: $store.settings.showSidebar).keyboardShortcut("s", modifiers: [.command, .option])
             Toggle("Show Inspector", isOn: $store.settings.showInspector).keyboardShortcut("i", modifiers: [.command, .option])
             Toggle("Show Task Board", isOn: $store.settings.showBottomPanel).keyboardShortcut("b", modifiers: [.command, .option])
             Picker("Layout", selection: $store.settings.layoutMode) {

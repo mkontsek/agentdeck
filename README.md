@@ -8,15 +8,17 @@ all of them a shared task board plus an MCP server so they can coordinate **with
 Subagents that a CLI spawns internally stay inside their parent pane. AgentDeck only manages sessions it created.
 
 ```
-┌ Sessions ──────┬─────────────────────────────────────────────┬ Inspector ───────┐
-│ ● Claude A  idle│ ┌ Claude A ──────┐ ┌ Codex B ─────────┐    │ name, dir, MCP   │
-│ ● Codex B  work │ │  (PTY terminal) │ │  (PTY terminal)   │    │ status, question │
-│ ● ChatGPT  idle │ └─────────────────┘ └───────────────────┘    │ font / size      │
-│                 │ ┌ ChatGPT ───────── (isolated WKWebView) ──┐ │ orchestrator     │
-│ Approval needed │ └──────────────────────────────────────────┘ │ actions          │
-├─────────────────┴──── Task Board │ Log ──────────────────────┴──────────────────┤
-│ #1 Fix login   in-progress  Codex B   "[Codex B] claimed"                        │
-└──────────────────────────────────────────────────────────────────────────────────┘
+┌ ⊞ +  AgentDeck            grid|canvas  Normal  A ──●── 13        ☾ ((·)) ▭ ▯ ┐
+│ · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · │
+│ · ┌ ● Claude A  working ─ ~/repo ─ 13 ⋯┐ · · ┌ ● ChatGPT  idle ─────────⋯┐ · │
+│ · │ working 42s · up 12m · Opus 4 · ctx │ · · │ (isolated WKWebView)       │ · │
+│ · │ 31% · 2 open: #3 #5 · 13 pt         │ · · │                            │ · │
+│ · │  (PTY terminal)                      │ · · └────────────────────────────┘ · │
+│ · └──────────────────────────────────────┘ · · · · ┌ ● Codex B  idle ─────⋯┐ · │
+│ · · · · · · · · · · · · · · · · · · · · · · · · ·  │  (PTY terminal)        │ · │
+│ · · · · · · · · · · · · · · · · · · · · · · · · ·  └────────────────────────┘ · │
+└───────────────────────────────────────────────────────────────────────────────┘
+   Sessions sidebar (⌥⌘S), task board + log (⌥⌘B) and inspector (⌥⌘I) slide in on demand.
 ```
 
 ## Requirements
@@ -77,11 +79,23 @@ Working while loading and Idle otherwise.
 |---|---|
 | Global font size | toolbar slider, Settings → General (affects every CLI pane without an override) |
 | Per-pane font | `−` `13` `+` in the pane header, inspector, or ⌘+ / ⌘= / ⌘− / ⌘0 on the focused pane (⌘0 = back to global) |
-| Layout | toolbar: **Grid** tiles panes evenly into N columns (stepper); **Freeform** uses per-pane sizes |
+| Layout | toolbar: **Canvas** (default) makes every pane a movable mini-window; **Grid** tiles panes evenly into N columns (stepper) |
+| Move | Canvas: drag a pane by its header; it snaps to an 8 pt grid and comes to the front; positions persist |
+| Tidy | ⌥⌘T or the toolbar button re-packs the mini-windows left to right at their current sizes |
 | Pane presets | Compact / Normal / Large: toolbar (default for all), pane menu, inspector, View → Pane Size |
-| Drag to resize | Freeform layout: drag the grip at a pane's bottom-right corner; double-click it to reset |
+| Drag to resize | Canvas: drag the grip at a pane's bottom-right corner; double-click it to reset |
 | Maximize | ⇧⌘M or pane menu; ⇧⌘M again restores |
-| Inspector / bottom panel | ⌥⌘I / ⌥⌘B, or the toolbar toggles; drag the split dividers |
+| Side panels | all collapsed by default: sidebar ⌥⌘S, inspector ⌥⌘I, task board + log ⌥⌘B, or the toolbar toggles |
+| Theme | ⌥⌘D flips light/dark; System / Light / Dark in View → Appearance or Settings. Terminals and web panes follow |
+
+### Focused pane stats
+
+The focused mini-window shows a stats strip under its header: status with time in that state, uptime, the CLI,
+model name and context usage, git worktree branch, open tasks, the pending question, program status (OSC 7501)
+and the effective font size. Model name and context (for example `Opus 4.1` or `63% context left`) are scraped
+from the CLI's own status line in the bottom rows of its screen, so they appear only when the CLI prints them;
+patterns live in `StatusHeuristics.modelStats`. Browser panes show page title and host instead. The inspector
+(⌥⌘I) shows the same data plus controls.
 
 Every change applies immediately and is saved.
 
@@ -199,6 +213,7 @@ my-agent --mcp-http agentdeck={mcpUrl} --name "{sessionName}"
   `StatusHeuristics.swift`.
 - Injection types a single line. Multi-line notes are collapsed.
 - The MCP transport answers with plain JSON (no SSE stream); `GET /mcp` returns 405, which clients handle.
+- An orchestrator's recruit request shows as an orange "approval" badge in the toolbar when the sidebar is hidden.
 - Google sign-in sometimes refuses embedded web views even with the Safari user agent used here; sign in to Gemini
   in a Chrome profile if that happens.
 - Browser sessions receive handoffs on the board only; nothing is typed into web UIs (no DOM automation by design).

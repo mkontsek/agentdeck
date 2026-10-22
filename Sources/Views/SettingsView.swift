@@ -27,13 +27,20 @@ private struct GeneralSettings: View {
                 Text("Any installed monospaced font, e.g. Menlo, SF Mono, JetBrains Mono. ⌘+ / ⌘− / ⌘0 change the focused pane only.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Appearance") {
+                Picker("Theme", selection: $store.settings.appearance) {
+                    ForEach(AppAppearance.allCases) { Label($0.label, systemImage: $0.systemImage).tag($0) }
+                }.pickerStyle(.segmented)
+                Text("Terminal panes and embedded web pages follow the theme. ⌥⌘D flips between light and dark.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Panes") {
                 Picker("Layout", selection: $store.settings.layoutMode) { ForEach(LayoutMode.allCases) { Text($0.label).tag($0) } }
                 Stepper("Grid columns: \(store.settings.gridColumns)", value: $store.settings.gridColumns, in: 1...4)
                 Picker("Default pane size", selection: $store.settings.defaultPanePreset) {
                     ForEach(PaneSizePreset.allCases) { p in Text("\(p.label) (\(Int(p.size.width))×\(Int(p.size.height)))").tag(p) }
                 }
-                Text("Freeform layout uses per-pane sizes (drag the grip at a pane's corner; double-click it to reset).")
+                Text("Canvas layout turns panes into movable mini-windows: drag the header to move, the corner grip to resize (double-click resets), ⌥⌘T tidies them.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

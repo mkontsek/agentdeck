@@ -11,10 +11,21 @@ final class AppStore: ObservableObject {
     @Published var tasks: [BoardTask] = []
     @Published var log: [LogEntry] = []
     @Published var settings = AppSettings() {
-        didSet { if loaded { applyFonts(); scheduleSave() } }
+        didSet {
+            guard loaded else { return }
+            applyFonts()
+            if oldValue.appearance != settings.appearance { applyAppearance() }
+            scheduleSave()
+        }
     }
     @Published var cliProfiles: [CLIProfile] = CLIProfile.builtins { didSet { if loaded { scheduleSave() } } }
-    @Published var focusedSessionID: UUID? { didSet { if loaded { scheduleSave() } } }
+    @Published var focusedSessionID: UUID? {
+        didSet {
+            guard loaded else { return }
+            if let id = focusedSessionID { raisePane(id) }
+            scheduleSave()
+        }
+    }
     @Published var maximizedSessionID: UUID?
     @Published var recruits: [RecruitRequest] = []
     @Published var mcpStatus: String = "stopped"
@@ -31,6 +42,7 @@ final class AppStore: ObservableObject {
     private var contextTimer: Timer?
     private var loaded = false
     private var pendingInjections: [UUID: [String]] = [:]
+    private var appearanceObserver: NSKeyValueObservation?
 
     static let supportDir: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -54,6 +66,10 @@ final class AppStore: ObservableObject {
     // MARK: Lifecycle
 
     func bootstrap() {
+        applyAppearance()
+        appearanceObserver = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in self?.applyTerminalTheme() }
+        }
         startMCP()
         for s in sessions where s.autoStart { startSession(s.id) }
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -318,6 +334,34 @@ final class AppStore: ObservableObject {
         }
     }
 
+    // MARK: Appearance
+
+    var isDarkTheme: Bool {
+        switch settings.appearance {
+        case .light: return false
+        case .dark: return true
+        case .system: return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+    }
+
+    func applyAppearance() {
+        switch settings.appearance {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+        applyTerminalTheme()
+    }
+
+    func applyTerminalTheme() {
+        terminals.applyTheme(dark: isDarkTheme)
+    }
+
+    /// Flip between light and dark (from System, go to the opposite of what is showing now).
+    func toggleTheme() {
+        settings.appearance = isDarkTheme ? .light : .dark
+    }
+
     // MARK: Font & size controls
 
     func adjustFont(for id: UUID?, by delta: Double) {
@@ -340,6 +384,58 @@ final class AppStore: ObservableObject {
     }
 
     func paneSize(for s: ManagedSession) -> PaneSize { s.paneSize ?? settings.defaultPanePreset.size }
+
+    // MARK: Canvas
+
+    static let canvasSpacing: Double = 16
+
+    /// Bring a pane to the front of the canvas.
+    func raisePane(_ id: UUID) {
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let top = sessions.map(\.zIndex).max() ?? 0
+        if sessions[i].zIndex < top || sessions.filter({ $0.zIndex == top }).count > 1 {
+            sessions[i].zIndex = top + 1
+            scheduleSave()
+        }
+    }
+
+    func setCanvasPosition(for id: UUID, _ p: PanePoint?) {
+        guard var s = session(id) else { return }
+        s.canvasPosition = p.map { PanePoint(x: max(0, $0.x), y: max(0, $0.y)) }
+        updateSession(s)
+    }
+
+    /// Give every pane that has no canvas position one, flowing after the existing panes.
+    func ensureCanvasPositions(viewportWidth: Double) {
+        let missing = sessions.filter { $0.canvasPosition == nil }
+        // A tiny width means the window has not been laid out yet; wait for the real size.
+        guard !missing.isEmpty, viewportWidth > 500 else { return }
+        let placed = sessions.filter { $0.canvasPosition != nil }
+        var y = placed.map { ($0.canvasPosition?.y ?? 0) + paneSize(for: $0).height }.max().map { $0 + Self.canvasSpacing } ?? Self.canvasSpacing
+        var x = Self.canvasSpacing
+        var rowH = 0.0
+        let width = viewportWidth
+        for s in missing {
+            let size = paneSize(for: s)
+            if x > Self.canvasSpacing, x + size.width > width { x = Self.canvasSpacing; y += rowH + Self.canvasSpacing; rowH = 0 }
+            setCanvasPosition(for: s.id, PanePoint(x: x, y: y))
+            x += size.width + Self.canvasSpacing
+            rowH = max(rowH, size.height)
+        }
+    }
+
+    /// Re-pack all panes left-to-right into the viewport width, keeping their sizes.
+    func tidyCanvas(viewportWidth: Double) {
+        var x = Self.canvasSpacing, y = Self.canvasSpacing, rowH = 0.0
+        let width = max(viewportWidth, 600)
+        for s in sessions.sorted(by: { $0.zIndex < $1.zIndex }) {
+            let size = paneSize(for: s)
+            if x > Self.canvasSpacing, x + size.width > width { x = Self.canvasSpacing; y += rowH + Self.canvasSpacing; rowH = 0 }
+            setCanvasPosition(for: s.id, PanePoint(x: x, y: y))
+            x += size.width + Self.canvasSpacing
+            rowH = max(rowH, size.height)
+        }
+    }
 
     // MARK: Injection
 
@@ -383,6 +479,9 @@ final class AppStore: ObservableObject {
             var st = ev.status
             if rt.status == .starting, now.timeIntervalSince(rt.startedAt ?? now) < 2 { st = .starting }
             rt.pendingQuestion = ev.pendingQuestion
+            let stats = StatusHeuristics.modelStats(lines: lines)
+            if let m = stats.model { rt.modelName = m }
+            if let c = stats.context { rt.contextInfo = c }
             runtime[s.id] = rt
             setStatus(s.id, st)
             if st == .idle { deliverFirstMessageIfNeeded(s); flushPending(s.id) }

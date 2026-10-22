@@ -61,9 +61,27 @@ enum PaneSizePreset: String, Codable, CaseIterable, Identifiable {
 }
 
 enum LayoutMode: String, Codable, CaseIterable, Identifiable {
-    case grid, freeform
+    case grid, canvas
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
+}
+
+enum AppAppearance: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var systemImage: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max"
+        case .dark: return "moon"
+        }
+    }
+}
+
+struct PanePoint: Codable, Hashable {
+    var x: Double
+    var y: Double
 }
 
 struct ManagedSession: Codable, Identifiable, Hashable {
@@ -87,6 +105,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     // UI / behaviour
     var fontSizeOverride: Double? = nil
     var paneSize: PaneSize? = nil
+    var canvasPosition: PanePoint? = nil
+    var zIndex: Int = 0
     var isOrchestrator: Bool = false
     var autoInjectContext: Bool = true
     var autoStart: Bool = true
@@ -100,7 +120,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, kind, createdAt, cliProfileID, workingDirectory, worktreePath, worktreeBranch, worktreeRepo,
-             initialPrompt, url, browserProfileID, fontSizeOverride, paneSize, isOrchestrator, autoInjectContext, autoStart
+             initialPrompt, url, browserProfileID, fontSizeOverride, paneSize, canvasPosition, zIndex, isOrchestrator,
+             autoInjectContext, autoStart
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +140,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         browserProfileID = c.value(.browserProfileID, default: UUID())
         fontSizeOverride = c.value(.fontSizeOverride, default: nil)
         paneSize = c.value(.paneSize, default: nil)
+        canvasPosition = c.value(.canvasPosition, default: nil)
+        zIndex = c.value(.zIndex, default: 0)
         isOrchestrator = c.value(.isOrchestrator, default: false)
         autoInjectContext = c.value(.autoInjectContext, default: true)
         autoStart = c.value(.autoStart, default: true)
@@ -137,6 +160,9 @@ struct SessionRuntime {
     var lastLines: [String] = []
     var programState: String? = nil      // OSC 7501 state if the program reports one
     var programMessage: String? = nil
+    var modelName: String? = nil         // parsed from the CLI's own status line, best effort
+    var contextInfo: String? = nil       // e.g. "ctx 21%" or "63% context left"
+
     var lastContextHash: Int? = nil
     var lastContextAt: Date? = nil
     var initialPromptSent: Bool = false
@@ -177,6 +203,27 @@ struct BoardTask: Codable, Identifiable, Hashable {
     var createdBy: String = "user"
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+
+    init(id: Int, title: String, description: String = "", ownerSessionID: UUID? = nil, status: TaskStatus = .todo,
+         notes: String = "", createdBy: String = "user") {
+        self.id = id; self.title = title; self.description = description; self.ownerSessionID = ownerSessionID
+        self.status = status; self.notes = notes; self.createdBy = createdBy
+    }
+
+    enum CodingKeys: String, CodingKey { case id, title, description, ownerSessionID, status, notes, createdBy, createdAt, updatedAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        title = c.value(.title, default: "Untitled")
+        description = c.value(.description, default: "")
+        ownerSessionID = c.value(.ownerSessionID, default: nil)
+        status = c.value(.status, default: .todo)
+        notes = c.value(.notes, default: "")
+        createdBy = c.value(.createdBy, default: "user")
+        createdAt = c.value(.createdAt, default: Date())
+        updatedAt = c.value(.updatedAt, default: Date())
+    }
 }
 
 // MARK: - Orchestration log
@@ -189,6 +236,21 @@ struct LogEntry: Codable, Identifiable, Hashable {
     var source: String
     var message: String
     var level: LogLevel = .info
+
+    init(source: String, message: String, level: LogLevel = .info) {
+        self.source = source; self.message = message; self.level = level
+    }
+
+    enum CodingKeys: String, CodingKey { case id, at, source, message, level }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, default: UUID())
+        at = c.value(.at, default: Date())
+        source = c.value(.source, default: "?")
+        message = c.value(.message, default: "")
+        level = c.value(.level, default: .info)
+    }
 }
 
 // MARK: - CLI profiles
@@ -281,22 +343,24 @@ struct AppSettings: Codable {
     var fontName: String = "Menlo"
     var defaultPanePreset: PaneSizePreset = .normal
     var gridColumns: Int = 2
-    var layoutMode: LayoutMode = .grid
+    var layoutMode: LayoutMode = .canvas
     var mcpPort: Int = 4820
     var contextInjectionEnabled: Bool = true
     var contextInjectionIntervalSeconds: Double = 300
     var idleAfterSeconds: Double = 4
     var stallAfterSeconds: Double = 90
     var worktreeRoot: String = "~/.agentdeck/worktrees"
-    var showInspector: Bool = true
-    var showBottomPanel: Bool = true
+    var appearance: AppAppearance = .system
+    var showSidebar: Bool = false
+    var showInspector: Bool = false
+    var showBottomPanel: Bool = false
     var bottomPanelHeight: Double = 240
 
     init() {}
 
     enum CodingKeys: String, CodingKey {
         case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, contextInjectionEnabled,
-             contextInjectionIntervalSeconds, idleAfterSeconds, stallAfterSeconds, worktreeRoot, showInspector,
+             contextInjectionIntervalSeconds, idleAfterSeconds, stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector,
              showBottomPanel, bottomPanelHeight
     }
 
@@ -314,6 +378,8 @@ struct AppSettings: Codable {
         idleAfterSeconds = c.value(.idleAfterSeconds, default: d.idleAfterSeconds)
         stallAfterSeconds = c.value(.stallAfterSeconds, default: d.stallAfterSeconds)
         worktreeRoot = c.value(.worktreeRoot, default: d.worktreeRoot)
+        appearance = c.value(.appearance, default: d.appearance)
+        showSidebar = c.value(.showSidebar, default: d.showSidebar)
         showInspector = c.value(.showInspector, default: d.showInspector)
         showBottomPanel = c.value(.showBottomPanel, default: d.showBottomPanel)
         bottomPanelHeight = c.value(.bottomPanelHeight, default: d.bottomPanelHeight)
@@ -335,10 +401,10 @@ struct PersistedState: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        sessions = c.value(.sessions, default: [])
-        tasks = c.value(.tasks, default: [])
+        sessions = c.lenientArray(.sessions)
+        tasks = c.lenientArray(.tasks)
         nextTaskID = c.value(.nextTaskID, default: 1)
-        log = c.value(.log, default: [])
+        log = c.lenientArray(.log)
         settings = c.value(.settings, default: AppSettings())
         cliProfiles = c.value(.cliProfiles, default: CLIProfile.builtins)
         focusedSessionID = c.value(.focusedSessionID, default: nil)
@@ -347,7 +413,17 @@ struct PersistedState: Codable {
 
 // MARK: - Helpers
 
+private struct Lenient<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+}
+
 extension KeyedDecodingContainer {
+    /// Decodes an array, skipping elements that fail instead of failing the whole array.
+    func lenientArray<T: Decodable>(_ key: Key) -> [T] {
+        ((try? decodeIfPresent([Lenient<T>].self, forKey: key)) ?? []).compactMap(\.value)
+    }
+
     func value<T: Decodable>(_ key: Key, default defaultValue: T) -> T {
         if let v = try? decodeIfPresent(T.self, forKey: key) { return v }
         return defaultValue

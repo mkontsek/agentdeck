@@ -12,7 +12,7 @@ enum StatusHeuristics {
         #"(?i)\bdo you want to\b"#, #"(?i)\bwould you like to\b"#, #"(?i)\bpress enter to\b"#,
         #"(?i)\bapprove\?"#, #"(?i)\ballow\b.*\?"#, #"(?i)\bchoose an option\b"#, #"(?i)\bselect an option\b"#,
         #"(?i)^\s*(❯|>)?\s*1\.\s*yes\b"#, #"(?i)\bconfirm\b.*\?\s*$"#, #"(?i)\benter .* to continue\b"#,
-        #"(?i)\bproceed\?"#, #"(?i)\benter to confirm\b"#, #"(?i)\btrust\b.*\?"#, #"(?i)\byes, (proceed|i trust|allow)\b"#, #"(?i)waiting for (your )?(input|approval|confirmation)"#, #"(?i)\brequires? (your )?approval\b"#,
+        #"(?i)\bproceed\?"#, #"(?i)\benter to confirm\b"#, #"(?i)\bspace to select\b"#, #"(?i)\bselect any\b"#, #"(?i)\bwish to enable\b"#, #"(?i)\benable selected\b"#, #"(?i)\btrust\b.*\?"#, #"(?i)\byes, (proceed|i trust|allow)\b"#, #"(?i)waiting for (your )?(input|approval|confirmation)"#, #"(?i)\brequires? (your )?approval\b"#,
     ])
 
     static let busy = compile([
@@ -27,6 +27,33 @@ enum StatusHeuristics {
     ])
 
     static let shellPrompt = compile([#"[$%#>❯›]\s*$"#])
+
+    static let contextInfo = compile([
+        #"(?i)\bctx\s*:?\s*\d{1,3}\s*%"#,
+        #"(?i)\b\d{1,3}\s*%\s*(context|ctx)\b(\s*(left|remaining|used|full))?"#,
+        #"(?i)\bcontext\s*(left|remaining|used|window)?\s*:?\s*\d{1,3}\s*%"#,
+    ])
+
+    static let modelName = compile([
+        #"(?i)\b(claude[- ][a-z0-9.-]+|fable(?: ?\d[\d.]*)?|opus(?: ?\d[\d.]*)?|sonnet(?: ?\d[\d.]*)?|haiku(?: ?\d[\d.]*)?|gpt-[a-z0-9.-]+|o[134](?:-[a-z0-9-]+)?|gemini-[a-z0-9.-]+|grok-[a-z0-9.-]+|codex-[a-z0-9.-]+|kimi[- ][a-z0-9.-]+|deepseek[- ][a-z0-9.-]+)\b"#,
+    ])
+
+    /// Best-effort model statistics scraped from the CLI's own status line (bottom rows of the screen).
+    static func modelStats(lines: [String]) -> (model: String?, context: String?) {
+        let tail = Array(lines.suffix(4))
+        func capture(_ regexes: [NSRegularExpression]) -> String? {
+            for line in tail.reversed() {
+                let range = NSRange(line.startIndex..., in: line)
+                for r in regexes {
+                    if let m = r.firstMatch(in: line, options: [], range: range), let rr = Range(m.range, in: line) {
+                        return String(line[rr]).trimmingCharacters(in: .whitespaces)
+                    }
+                }
+            }
+            return nil
+        }
+        return (capture(modelName), capture(contextInfo))
+    }
 
     static func firstMatch(_ regexes: [NSRegularExpression], in lines: [String]) -> String? {
         for line in lines.reversed() {

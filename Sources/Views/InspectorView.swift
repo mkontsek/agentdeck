@@ -98,7 +98,10 @@ struct InspectorView: View {
                     ForEach(PaneSizePreset.allCases) { p in Button(p.label) { store.setPaneSize(for: s.id, p.size) } }
                     Button("Reset") { store.setPaneSize(for: s.id, nil) }.disabled(s.paneSize == nil)
                 }.buttonStyle(.bordered).controlSize(.small)
-                if let ps = s.paneSize { Text("Custom: \(Int(ps.width)) × \(Int(ps.height)) (used in Freeform layout)").font(.caption).foregroundStyle(.secondary) }
+                if let ps = s.paneSize { Text("Custom: \(Int(ps.width)) × \(Int(ps.height)) (used on the Canvas)").font(.caption).foregroundStyle(.secondary) }
+                if let p = s.canvasPosition { Text("Canvas position: \(Int(p.x)), \(Int(p.y))").font(.caption).foregroundStyle(.secondary) }
+                if let m = rt.modelName { LabeledContent("Model", value: m) }
+                if let c = rt.contextInfo { LabeledContent("Context", value: c) }
             }
             let mine = store.tasks.filter { $0.ownerSessionID == s.id }
             if !mine.isEmpty {

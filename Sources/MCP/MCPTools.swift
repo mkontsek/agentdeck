@@ -82,6 +82,8 @@ extension AppStore {
             if let u = s.url { d["url"] = u }
             if let q = rt?.pendingQuestion { d["pending_question"] = q }
             if let t = rt?.title, !t.isEmpty { d["title"] = t }
+            if let m = rt?.modelName { d["model"] = m }
+            if let c = rt?.contextInfo { d["context"] = c }
             d["open_tasks"] = tasks.filter { $0.ownerSessionID == s.id && $0.status != .done }.map(\.id)
             return d
         }

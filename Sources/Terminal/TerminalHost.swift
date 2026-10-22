@@ -28,10 +28,13 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
     func view(for id: UUID) -> DeckTerminalView? { views[id] }
     func isRunning(_ id: UUID) -> Bool { views[id] != nil }
 
+    private(set) var dark = true
+
     func makeView(for id: UUID, font: NSFont) -> DeckTerminalView {
         if let v = views[id] { return v }
         let v = DeckTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         v.font = font
+        theme(v, dark: dark)
         v.processDelegate = self
         v.onFocus = { [weak self] in self?.onFocus?(id) }
         v.setProcessOutputHandler { [weak self] in
@@ -65,6 +68,23 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
 
     func send(id: UUID, text: String) {
         views[id]?.send(txt: text)
+    }
+
+    func applyTheme(dark: Bool) {
+        self.dark = dark
+        for v in views.values { theme(v, dark: dark) }
+    }
+
+    private func theme(_ v: DeckTerminalView, dark: Bool) {
+        if dark {
+            v.nativeBackgroundColor = NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.11, alpha: 1)
+            v.nativeForegroundColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+            v.caretColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+        } else {
+            v.nativeBackgroundColor = NSColor(calibratedWhite: 0.99, alpha: 1)
+            v.nativeForegroundColor = NSColor(calibratedWhite: 0.12, alpha: 1)
+            v.caretColor = NSColor(calibratedWhite: 0.12, alpha: 1)
+        }
     }
 
     func setFont(id: UUID, _ font: NSFont) {
