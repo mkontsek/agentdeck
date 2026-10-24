@@ -91,9 +91,9 @@ private struct OrchestrationSettings: View {
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Context injection") {
+            Section("Briefing and context") {
                 Text(
-                    "Status summaries are never broadcast automatically. Send one to a session with Session › Inject Context Now, the pane menu, or the inspector."
+                    "Each CLI session gets its briefing (identity, tools, board, skills) as a file. Profiles whose command uses {briefingPath} load it silently as a system prompt; other profiles are typed one short line pointing at the file. Status summaries are never broadcast automatically. Send one to a session with Session › Inject Context Now, the pane menu, or the inspector."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -150,8 +150,12 @@ private struct ProfilesSettings: View {
                         TextEditor(text: $store.cliProfiles[i].command).font(.system(.body, design: .monospaced)).frame(
                             height: 60)
                     }
+                    LabeledContent("Resume command") {
+                        TextEditor(text: $store.cliProfiles[i].resumeCommand.unwrap(""))
+                            .font(.system(.body, design: .monospaced)).frame(height: 60)
+                    }
                     Text(
-                        "zsh snippet. Placeholders: {mcpUrl} {mcpConfigPath} {sessionId} {sessionName} {cwd}. Env: AGENTDECK_SESSION_ID, AGENTDECK_SESSION_NAME, AGENTDECK_MCP_URL, AGENTDECK_MCP_CONFIG."
+                        "zsh snippets. Placeholders: {mcpUrl} {mcpConfigPath} {briefingPath} {sessionId} {sessionName} {cwd}. Env: AGENTDECK_SESSION_ID, AGENTDECK_SESSION_NAME, AGENTDECK_MCP_URL, AGENTDECK_MCP_CONFIG, AGENTDECK_BRIEFING. The resume command runs instead of the command when a session continues its last conversation; leave it empty to always start fresh."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                     Stepper(

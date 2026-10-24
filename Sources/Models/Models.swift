@@ -42,6 +42,23 @@ enum SessionStatus: String, Codable, CaseIterable {
     var acceptsInjection: Bool { self == .idle }
 }
 
+enum DesktopNotificationState: Equatable {
+    case none
+    case waitingForInput(count: Int)
+    case finished(count: Int)
+
+    var badgeLabel: String? {
+        switch self {
+        case .none:
+            return nil
+        case .waitingForInput(let count):
+            return count > 1 ? "\(count)?" : "?"
+        case .finished(let count):
+            return count > 1 ? "\(count)✓" : "✓"
+        }
+    }
+}
+
 struct PaneSize: Codable, Hashable {
     var width: Double
     var height: Double
@@ -114,6 +131,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     var isOrchestrator: Bool = false
     var autoInjectContext: Bool = true
     var autoStart: Bool = true
+    /// Launch the profile's resume command when the provider has a conversation for this directory.
+    var resumeLastConversation: Bool = true
 
     var effectiveDirectory: String { worktreePath ?? workingDirectory }
 
@@ -128,7 +147,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
             initialPrompt, url, browserProfileID, browserProfileMode, agentOwnerID, paneID, fontSizeOverride, paneSize,
             canvasPosition,
             zIndex, isOrchestrator,
-            autoInjectContext, autoStart
+            autoInjectContext, autoStart, resumeLastConversation
     }
 
     init(from decoder: Decoder) throws {
@@ -155,6 +174,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         isOrchestrator = c.value(.isOrchestrator, default: false)
         autoInjectContext = c.value(.autoInjectContext, default: true)
         autoStart = c.value(.autoStart, default: true)
+        resumeLastConversation = c.value(.resumeLastConversation, default: true)
     }
 }
 
@@ -174,6 +194,8 @@ struct SessionRuntime: Equatable {
     var contextInfo: String? = nil  // e.g. "ctx 21%" or "63% context left"
 
     var initialPromptSent: Bool = false
+    /// True when the current launch continued an earlier conversation; the first message is then skipped.
+    var resumed: Bool = false
     var isRunning: Bool = false
     var generation: Int = 0
     var injectionReadyAt: Date? = nil
@@ -283,22 +305,38 @@ struct CLIProfile: Codable, Identifiable, Hashable {
     var id: String
     var name: String
     var command: String
+    /// Used instead of `command` when the session continues its last conversation. `nil` always starts fresh.
+    var resumeCommand: String? = nil
     var submitDelayMs: Int = 150
     var supportsMCP: Bool = true
     var notes: String = ""
 
+    /// The briefing travels inside the launch command (e.g. as an appended system prompt) instead of being typed.
+    var deliversBriefingInCommand: Bool { command.contains("{briefingPath}") }
+    var canResume: Bool { !(resumeCommand ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     static let builtins: [CLIProfile] = [
         CLIProfile(
             id: "claude", name: "Claude Code",
-            command: "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\"",
-            notes: "AgentDeck writes a per-session MCP config file; Claude loads it with --mcp-config."),
+            command:
+                "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\" --append-system-prompt-file \"{briefingPath}\"",
+            resumeCommand:
+                "claude --continue --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\" --append-system-prompt-file \"{briefingPath}\"",
+            notes:
+                "AgentDeck writes a per-session MCP config file and a briefing file; Claude loads them with --mcp-config and --append-system-prompt-file. --continue reopens the directory's last conversation."
+        ),
         CLIProfile(
             id: "codex", name: "Codex",
             command: "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
-            notes: "Streamable HTTP MCP server injected via -c config override."),
+            resumeCommand:
+                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+            notes:
+                "Streamable HTTP MCP server injected via -c config override. resume --last reopens the most recent session."
+        ),
         CLIProfile(
             id: "gemini", name: "Gemini CLI",
             command: "gemini --yolo",
+            resumeCommand: "gemini --yolo --resume latest",
             notes:
                 "Run once: gemini mcp add -t http -s user agentdeck {mcpUrl} (session identity is then weaker; use whoami/from_session)."
         ),

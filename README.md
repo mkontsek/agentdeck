@@ -156,12 +156,13 @@ Every CLI session is launched with these environment variables and files:
 | `AGENTDECK_SESSION_ID`, `AGENTDECK_SESSION_NAME` | identity |
 | `AGENTDECK_MCP_URL` | the session's endpoint |
 | `AGENTDECK_MCP_CONFIG` | path to a JSON file `{"mcpServers":{"agentdeck":{"type":"http","url":…}}}` |
+| `AGENTDECK_BRIEFING` | path to the session's Markdown briefing (identity, tools, board, skills) |
 
 How the built-in profiles connect:
 
 | Profile | Launch command | MCP |
 |---|---|---|
-| Claude Code | `claude --dangerously-skip-permissions --mcp-config "{mcpConfigPath}"` | automatic |
+| Claude Code | `claude --dangerously-skip-permissions --mcp-config "{mcpConfigPath}" --append-system-prompt-file "{briefingPath}"` | automatic |
 | Codex | `codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url="{mcpUrl}"'` | automatic |
 | Gemini CLI | `gemini --yolo` | once: `gemini mcp add -t http -s user agentdeck $AGENTDECK_MCP_URL` |
 | Antigravity | `agy --dangerously-skip-permissions` | configure a remote server in `/mcp` using the session MCP URL |
@@ -171,6 +172,22 @@ How the built-in profiles connect:
 Agent profiles bypass tool permission prompts by default. Codex also bypasses its sandbox. Edit the commands
 in Settings → CLI Profiles to change this. A one-time upgrade updates unchanged older built-in commands;
 custom commands and subsequent edits are preserved. Running sessions pick up changes when restarted.
+
+### Continuing the last conversation
+
+Sessions reopen their last conversation by default. When a session starts and the provider has a conversation
+for the session's directory, AgentDeck runs the profile's *resume command* instead of its command:
+
+| Profile | Resume command | Detected from |
+|---|---|---|
+| Claude Code | `claude --continue …` | `~/.claude/projects/<encoded directory>/*.jsonl` |
+| Codex | `codex resume --last …` | `~/.codex/sessions/**/rollout-*.jsonl` whose `cwd` matches |
+| Gemini CLI | `gemini --yolo --resume latest` | `~/.gemini/tmp/<directory name>/chats/` |
+
+A directory without a prior conversation starts fresh. Turn this off per session with the inspector's
+"Continue last conversation on start" or at creation time; clear a profile's resume command to disable it for
+every session using that profile. A resumed session is not briefed again and does not receive its first prompt
+again. The focused session and pane tabs are restored at launch regardless.
 
 `GET http://127.0.0.1:4820/` returns a JSON snapshot of sessions and tasks for debugging.
 Tool calls require a known session endpoint. The server validates Host and Origin and rejects foreign web origins.
@@ -210,8 +227,12 @@ example to sign in once. Removing the CLI session removes its browser and delete
 
 ### How agents learn about each other
 
-- **Briefing.** The first time a CLI session goes idle, AgentDeck types one message into it: who it is, where it
-  runs, which tools exist, and the current board — followed by the session's "first prompt" if you set one.
+- **Briefing.** Before a CLI session launches, AgentDeck writes `~/Library/Application Support/AgentDeck/briefing/<id>.md`:
+  who it is, where it runs, which tools exist, the current board and the skill catalog. Claude Code loads it as
+  an appended system prompt (`--append-system-prompt-file "{briefingPath}"`), so nothing appears in the
+  terminal. Profiles without `{briefingPath}` in their command are typed one line the first time they go idle:
+  `[AgentDeck] Read your briefing at <path> before working.` — followed by the session's "first prompt" if you
+  set one. `AGENTDECK_BRIEFING` also points at the file.
 - **Status summaries** are never broadcast automatically; each one costs the agent a turn. "Inject Context Now"
   (Session menu, pane menu or inspector) sends the focused session one line like
   `[AgentDeck status] Sessions: Claude A (idle, you), Codex B (working). Open tasks: 2 — #3 "Fix login" (in-progress, Codex B)…`.
@@ -242,7 +263,10 @@ initial_prompt="Run the test suite and report failures to the board")`; the requ
 Settings → **CLI Profiles** → `+`. A profile is a zsh snippet run as `zsh -l -i -c "<command>"` in the session's
 directory, with these placeholders:
 
-`{mcpUrl}` `{mcpConfigPath}` `{sessionId}` `{sessionName}` `{cwd}`
+`{mcpUrl}` `{mcpConfigPath}` `{briefingPath}` `{sessionId}` `{sessionName}` `{cwd}`
+
+A profile may also have a *resume command* with the same placeholders; see "Continuing the last conversation".
+Include `{briefingPath}` in the command when the CLI can take a system-prompt file, and the briefing is never typed.
 
 Placeholders are inserted as literal data in ordinary unquoted, single-quoted and double-quoted arguments.
 Use environment variables for advanced shell constructs such as here-documents and nested command substitutions.
@@ -266,7 +290,7 @@ enable individual skills, preview instructions, open their source files, and rel
 
 AgentDeck writes a catalog at `~/Library/Application Support/AgentDeck/skills/catalog.md`, exports
 `AGENTDECK_SKILLS_FILE` and JSON `AGENTDECK_SKILL_DIRECTORIES`, and points CLI agents to relevant skill
-files in their initial briefing. Connected MCP clients can call `list_skills` and `read_skill`.
+files in their briefing file. Connected MCP clients can call `list_skills` and `read_skill`.
 This shares instructions without modifying provider configuration or copying skills into repositories;
 it does not register provider-native slash commands. For an already-running agent, use **Use in focused CLI**.
 For browser chats, use **Copy for browser** and paste the instructions yourself. A browser chat cannot

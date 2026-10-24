@@ -10,8 +10,12 @@ final class CLIProfileTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         var session = ManagedSession(name: "Test", kind: .cli)
+        session.resumeLastConversation = false
         let expectedArguments = [
-            "claude": ["--dangerously-skip-permissions", "--mcp-config", store.mcpConfigPath(for: session.id)],
+            "claude": [
+                "--dangerously-skip-permissions", "--mcp-config", store.mcpConfigPath(for: session.id),
+                "--append-system-prompt-file", store.briefingPath(for: session.id),
+            ],
             "codex": [
                 "--dangerously-bypass-approvals-and-sandbox", "-c",
                 "mcp_servers.agentdeck.url=\"\(store.mcpURL(for: session.id))\"",
@@ -36,6 +40,49 @@ final class CLIProfileTests: XCTestCase {
         }
         XCTAssertEqual(
             store.cliProfiles.first { $0.id == "shell" }?.command, "exec ${SHELL:-/bin/zsh} -l")
+        // Resume commands keep the same arguments and add the provider's continue flag.
+        let expectedResumeArguments = [
+            "claude": ["--continue"] + expectedArguments["claude"]!,
+            "codex": ["resume", "--last"] + expectedArguments["codex"]!,
+            "gemini": ["--yolo", "--resume", "latest"],
+        ]
+        for (id, arguments) in expectedResumeArguments {
+            session.cliProfileID = id
+            let command = stubs + "\n" + store.launchCommand(for: session, resume: true)
+            let output = try Shell.run(["/bin/zsh", "-f", "-c", command])
+            XCTAssertEqual(output.split(separator: "\n").map { String($0) }, arguments, id)
+        }
+        XCTAssertNil(store.cliProfiles.first { $0.id == "shell" }?.resumeCommand)
+    }
+
+    @MainActor
+    func testUnchangedOlderClaudeCommandAdoptsBriefingFileAndResumeCommands() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = directory.appendingPathComponent("state.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var state = PersistedState()
+        state.unrestrictedCLIDefaultsApplied = true
+        state.cliProfiles = CLIProfile.builtins.map { profile in
+            var saved = profile
+            saved.resumeCommand = nil
+            if profile.id == "claude" {
+                saved.command = "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\""
+            }
+            if profile.id == "codex" { saved.command = "codex --model gpt-5" }
+            return saved
+        }
+        try JSONEncoder().encode(state).write(to: url)
+        let store = AppStore(stateURL: url)
+        defer { store.shutdown() }
+        let claude = try XCTUnwrap(store.cliProfiles.first { $0.id == "claude" })
+        XCTAssertEqual(claude.command, CLIProfile.builtins[0].command)
+        XCTAssertEqual(claude.resumeCommand, CLIProfile.builtins[0].resumeCommand)
+        // A customised command keeps its text and gets no resume command imposed on it.
+        let codex = try XCTUnwrap(store.cliProfiles.first { $0.id == "codex" })
+        XCTAssertEqual(codex.command, "codex --model gpt-5")
+        XCTAssertNil(codex.resumeCommand)
+        XCTAssertEqual(store.cliProfiles.first { $0.id == "gemini" }?.resumeCommand, "gemini --yolo --resume latest")
     }
 
     @MainActor

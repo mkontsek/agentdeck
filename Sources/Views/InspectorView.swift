@@ -84,6 +84,8 @@ struct InspectorView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     Toggle("Orchestrator (may recruit sessions)", isOn: bind(s, \.isOrchestrator))
                     Toggle("Include status summary in start-up briefing", isOn: bind(s, \.autoInjectContext))
+                    Toggle("Continue last conversation on start", isOn: bind(s, \.resumeLastConversation))
+                        .disabled(!(store.profile(for: s)?.canResume ?? false))
                     Toggle("Start at launch", isOn: bind(s, \.autoStart))
                 }
                 Section("Screen (last lines)") {

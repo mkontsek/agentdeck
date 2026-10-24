@@ -164,6 +164,7 @@ final class AppStore: ObservableObject {
         selectedPaneTabs = st.selectedPaneTabs
         focusedSessionID = session(st.focusedSessionID)?.id
         if let focused = session(focusedSessionID) { selectedPaneTabs[focused.paneID] = focused.id }
+        cliProfiles = cliProfiles.map { $0.adoptingBriefingAndResumeDefaults() }
         for s in sessions { runtime[s.id] = SessionRuntime(status: .exited) }
     }
 
@@ -302,25 +303,57 @@ final class AppStore: ObservableObject {
         let cfg: [String: Any] = ["mcpServers": ["agentdeck": ["type": "http", "url": mcpURL(for: id)]]]
         let data = try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted])
         let url = URL(fileURLWithPath: mcpConfigPath(for: id))
+    func briefingPath(for id: UUID) -> String {
+        storageURL.deletingLastPathComponent().appendingPathComponent("briefing").appendingPathComponent(
+            "\(id.uuidString).md"
+        ).path
+    }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
     }
 
-    func launchCommand(for s: ManagedSession) -> String {
+    /// True when this launch should run the profile's resume command: the session asks for it, the profile has
+    /// one, and the provider's storage shows a conversation for the directory (or cannot be inspected).
+    func shouldResume(_ s: ManagedSession) -> Bool {
+        guard s.resumeLastConversation, let profile = profile(for: s), profile.canResume else { return false }
+        return ResumeDetection.hasPriorConversation(profileID: profile.id, cwd: s.effectiveDirectory) ?? true
+    }
+
+    func launchCommand(for s: ManagedSession, resume: Bool? = nil) -> String {
         guard let profile = profile(for: s) else { return "" }
         return CommandTemplate.expand(
-            profile.command,
+            template,
             values: [
                 "mcpUrl": mcpURL(for: s.id), "mcpConfigPath": mcpConfigPath(for: s.id),
                 "sessionId": s.id.uuidString, "sessionName": s.name, "cwd": s.effectiveDirectory,
+        let template = (resume ?? shouldResume(s)) ? (profile.resumeCommand ?? profile.command) : profile.command
             ])
     }
 
     func environment(for s: ManagedSession) -> [String: String] {
+                "briefingPath": briefingPath(for: s.id),
         var env = ProcessInfo.processInfo.environment
         // Nested launches: a parent Claude Code / Codex session must not leak its markers into the child.
         for k in env.keys where k.hasPrefix("CLAUDE") || k.hasPrefix("CODEX_") { env[k] = nil }
         env["TERM"] = "xterm-256color"
+    /// The start-up briefing as a file, so a provider can take it as a system prompt instead of a typed message.
+    func briefingText(for s: ManagedSession) -> String {
+        var parts = [briefing(for: s)]
+        if s.autoInjectContext { parts.append(contextSummary(for: s)) }
+        if !skillLibrary.enabledSkills.isEmpty { parts.append(skillsInstruction) }
+        return parts.joined(separator: "\n\n") + "\n"
+    }
+
+    private var skillsInstruction: String {
+        "[AgentDeck skills] Read the skill catalog at \(skillsCatalogURL.path) and load relevant SKILL.md instructions before working. MCP clients can also call list_skills and read_skill. Relative skill references resolve against the skill's own directory."
+    }
+
+    private func writeBriefing(for s: ManagedSession) throws {
+        let url = URL(fileURLWithPath: briefingPath(for: s.id))
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(briefingText(for: s).utf8).write(to: url, options: .atomic)
+    }
+
         env["COLORTERM"] = "truecolor"
         env["TERM_PROGRAM"] = "AgentDeck"
         if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
@@ -333,6 +366,7 @@ final class AppStore: ObservableObject {
             (try? String(data: JSONEncoder().encode(settings.skillDirectories.map(\.expandingTilde)), encoding: .utf8))
             ?? "[]"
         let additionalPaths = [
+        env["AGENTDECK_BRIEFING"] = briefingPath(for: s.id)
             NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
         ]
         env["PATH"] = ([env["PATH"] ?? ""] + additionalPaths).joined(separator: ":")
@@ -354,6 +388,7 @@ final class AppStore: ObservableObject {
         rt.programMessage = nil
         rt.modelName = nil
         rt.contextInfo = nil
+        rt.resumed = false
         rt.injectionReadyAt = nil
         rt.generation += 1
         rt.isRunning = true
@@ -375,9 +410,14 @@ final class AppStore: ObservableObject {
                 lastError = "Session could not start: \(error.localizedDescription)"
                 return
             }
-            terminals.start(
-                id: id, command: launchCommand(for: s), cwd: cwd, environment: environment(for: s), font: font(for: s))
-            addLog(source: s.name, message: "launched: \(launchCommand(for: s)) in \(cwd.abbreviatingHome)")
+                if profile(for: s)?.supportsMCP == true { try writeBriefing(for: s) }
+            let resume = shouldResume(s)
+            runtime[id]?.resumed = resume
+            let command = launchCommand(for: s, resume: resume)
+            terminals.start(id: id, command: command, cwd: cwd, environment: environment(for: s), font: font(for: s))
+            addLog(
+                source: s.name,
+                message: "\(resume ? "resumed" : "launched"): \(command) in \(cwd.abbreviatingHome)")
         case .browser:
             _ = browsers.controller(for: s, sharedProfileID: settings.sharedBrowserProfileID)
             setStatus(id, .idle)
@@ -454,6 +494,7 @@ final class AppStore: ObservableObject {
         sessions.removeAll { $0.id == id }
         runtime[id] = nil
         pendingInjections[id] = nil
+        try? FileManager.default.removeItem(atPath: briefingPath(for: id))
         if selectedPaneTabs[s.paneID] == id { selectedPaneTabs[s.paneID] = replacement }
         if remaining.isEmpty { selectedPaneTabs[s.paneID] = nil }
         if maximizedSessionID == id { maximizedSessionID = replacement }
@@ -485,15 +526,16 @@ final class AppStore: ObservableObject {
         switch settings.appearance {
         case .light: return false
         case .dark: return true
-        case .system: return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        case .system:
+            return (NSApp as NSApplication?)?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         }
     }
 
     func applyAppearance() {
         switch settings.appearance {
-        case .system: NSApp.appearance = nil
-        case .light: NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .system: app.appearance = nil
+        case .light: app.appearance = NSAppearance(named: .aqua)
+        case .dark: app.appearance = NSAppearance(named: .darkAqua)
         }
         applyTerminalTheme()
     }
@@ -561,6 +603,7 @@ final class AppStore: ObservableObject {
         let placed = panes.map(\.activeSession).filter { $0.canvasPosition != nil }
         var y =
             placed.map { ($0.canvasPosition?.y ?? 0) + paneSize(for: $0).height }.max().map { $0 + Self.canvasSpacing }
+        guard let app = NSApp as NSApplication? else { return }
             ?? Self.canvasSpacing
         var x = Self.canvasSpacing
         var rowH = 0.0
@@ -690,21 +733,13 @@ final class AppStore: ObservableObject {
         guard var rt = runtime[s.id], rt.status.acceptsInjection, !rt.initialPromptSent else { return }
         rt.initialPromptSent = true
         runtime[s.id] = rt
-        let canBrief = s.autoInjectContext && (profile(for: s)?.supportsMCP ?? false)
-        let canLoadSkills = !skillLibrary.enabledSkills.isEmpty && profile(for: s)?.supportsMCP == true
+        guard !rt.resumed, let profile = profile(for: s) else { return }
         var parts: [String] = []
-        if canBrief {
-            parts.append(briefing(for: s))
-            parts.append(contextSummary(for: s))
-        }
-        if canLoadSkills {
-            parts.append(
-                "[AgentDeck skills] Read the skill catalog at \(skillsCatalogURL.path) and load relevant SKILL.md instructions before working. MCP clients can also call list_skills and read_skill. Relative skill references resolve against the skill's own directory."
-            )
-        }
-        if let p = s.initialPrompt?.singleLine, !p.isEmpty { parts.append(canBrief ? "Your first task: \(p)" : p) }
+        let pointer = profile.supportsMCP && !profile.deliversBriefingInCommand
+        if pointer { parts.append("[AgentDeck] Read your briefing at \(briefingPath(for: s.id)) before working.") }
+        if let p = s.initialPrompt?.singleLine, !p.isEmpty { parts.append(pointer ? "Your first task: \(p)" : p) }
         guard !parts.isEmpty else { return }
-        _ = inject(s.id, text: parts.joined(separator: " "), source: canBrief || canLoadSkills ? "context" : "user")
+        _ = inject(s.id, text: parts.joined(separator: " "), source: pointer ? "context" : "user")
     }
 
     // MARK: Context awareness
@@ -758,6 +793,9 @@ final class AppStore: ObservableObject {
         addLog(source: createdBy, message: "task #\(t.id) created: \(title)")
         scheduleSave()
         return t
+    /// The briefing itself lives in a file (see `briefingText`). Providers whose command takes `{briefingPath}`
+    /// get it as a system prompt and nothing is typed; others get one short pointer line. A resumed conversation
+    /// already saw its briefing and first prompt, so nothing is typed at all.
     }
 
     func updateTask(_ t: BoardTask, by source: String = "user") {

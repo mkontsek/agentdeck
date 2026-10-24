@@ -13,6 +13,7 @@ struct NewSessionSheet: View {
     @State private var initialPrompt = ""
     @State private var orchestrator = false
     @State private var autoInject = true
+    @State private var resumeLast = true
     @State private var preset: BrowserPreset = .chatgpt
     @State private var url = BrowserPreset.chatgpt.url
     @State private var browserProfileMode: BrowserProfileMode = .shared
@@ -53,7 +54,9 @@ struct NewSessionSheet: View {
                         }
                         Toggle("Orchestrator (can recruit sessions with your approval)", isOn: $orchestrator)
                             .padding(.leading, 116)
-                        Toggle("Auto-inject status summaries", isOn: $autoInject).padding(.leading, 116)
+                        Toggle("Include status summary in start-up briefing", isOn: $autoInject).padding(.leading, 116)
+                        Toggle("Continue the directory's last conversation when one exists", isOn: $resumeLast)
+                            .padding(.leading, 116)
                     } else {
                         field("Site") {
                             Picker("Site", selection: $preset) {
@@ -124,6 +127,7 @@ struct NewSessionSheet: View {
             s.initialPrompt = initialPrompt.isEmpty ? nil : initialPrompt
             s.isOrchestrator = orchestrator
             s.autoInjectContext = autoInject
+            s.resumeLastConversation = resumeLast
             if useWorktree {
                 do {
                     let wt = try await Worktree.create(
