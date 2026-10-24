@@ -9,6 +9,9 @@ Generate the project from `project.yml`; the Xcode project and `build/` are igno
 | `make test` | Hostless XCTest bundle, Debug build, temporary state and repositories |
 | `make build` | Release application build |
 | `make check` | Lint, tests, Release build |
+| `make install` | Install the build in Applications and move duplicate build/backup apps to Trash |
+| `make run` | Install, clean up duplicates, then open the Applications copy |
+| `make cleanup-installs` | Remove duplicate AgentDeck apps under `build/` after installation |
 
 Xcode must include `swift-format` for lint/format. The Makefile uses Bash pipefail so a compiler failure cannot be hidden by the output tail.
 
@@ -16,6 +19,12 @@ For a local app update, increment the patch version in `project.yml`, build, the
 `/Applications/AgentDeck.app` and quit/reopen AgentDeck. A successful `make build` alone leaves an already-running
 installed app unchanged. Verify the installed bundle version and the visible feature after relaunch;
 user state and browser profiles live outside the application bundle.
+
+Keep only the latest verified `/Applications/AgentDeck.app`. Do not retain old installation `.app` backups.
+The cleanup script checks bundle identity and refuses to discard a build newer than the installed version;
+it moves matching duplicates to Trash, unregisters their app entries, and preserves other applications. Builds/tests can recreate Debug or
+Release app bundles, so run cleanup again after validation and installation. This preference is also recorded
+in the project's `AGENTS.md`. Saved sessions and browser profiles are not application bundles and stay in place.
 
 Local acceptance on 0.1.7 confirmed visible tab strips in CLI mini-windows, ⌘T and the strip's **+** adding
 another Codex instance to the same pane, and closing the extra tab without removing its siblings.

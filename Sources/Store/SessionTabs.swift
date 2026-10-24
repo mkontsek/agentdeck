@@ -8,9 +8,14 @@ extension AppStore {
         return panes.first { $0.id == session.paneID }
     }
 
+    func cliTabSource(for id: UUID?) -> ManagedSession? {
+        let target = session(id)
+        return target?.kind == .cli ? target : pane(containing: id)?.tabs.first { $0.kind == .cli }
+    }
+
     @discardableResult
     func addCLITab(to id: UUID?, start: Bool = true) -> ManagedSession? {
-        guard let source = session(id), source.kind == .cli, let profile = profile(for: source) else { return nil }
+        guard let source = cliTabSource(for: id), let profile = profile(for: source) else { return nil }
         var number = 2
         while sessions.contains(where: { $0.name.caseInsensitiveCompare("\(profile.name) \(number)") == .orderedSame })
         {

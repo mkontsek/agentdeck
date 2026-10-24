@@ -4,7 +4,7 @@ DERIVED=build
 CONFIG?=Release
 APP_PATH=$(DERIVED)/Build/Products/$(CONFIG)/$(APP).app
 
-.PHONY: gen build test lint format check run install clean icon
+.PHONY: gen build test lint format check run install cleanup-installs clean icon
 
 gen:
 	xcodegen generate
@@ -25,13 +25,17 @@ format:
 
 check: lint test build
 
-run: build
-	open $(APP_PATH)
+run: install
+	open /Applications/$(APP).app
 
 install: build
 	rm -rf /Applications/$(APP).app
 	cp -R $(APP_PATH) /Applications/$(APP).app
+	$(MAKE) cleanup-installs
 	@echo "Installed to /Applications/$(APP).app"
+
+cleanup-installs:
+	swift scripts/cleanup-installations.swift "/Applications/$(APP).app" "$(DERIVED)"
 
 clean:
 	rm -rf $(DERIVED) $(APP).xcodeproj

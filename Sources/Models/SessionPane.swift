@@ -6,6 +6,8 @@ struct SessionPane: Identifiable {
     var tabs: [ManagedSession]
     var activeSession: ManagedSession
 
+    var showsTabBar: Bool { tabs.count > 1 || tabs.contains { $0.kind == .cli } }
+
     static func grouped(_ sessions: [ManagedSession], selectedTabs: [UUID: UUID]) -> [SessionPane] {
         var panes: [SessionPane] = []
         var indices: [UUID: Int] = [:]

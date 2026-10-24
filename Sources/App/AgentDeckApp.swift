@@ -21,9 +21,16 @@ struct AgentDeckApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppStore.shared.bootstrap()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if let id = AppStore.shared.focusedSessionID {
+            AppStore.shared.acknowledgeFinished(id)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -31,6 +38,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let store = AppStore.shared
+        let waiting = store.sessions.filter { $0.kind == .cli && store.status(of: $0.id) == .waitingForUser }
+        let finished = store.sessions.filter { store.finishedSessionIDs.contains($0.id) }
+        guard !waiting.isEmpty || !finished.isEmpty else { return nil }
+
+        let menu = NSMenu()
+        if !waiting.isEmpty {
+            let item = NSMenuItem(title: "Waiting for Input:", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            for s in waiting {
+                let sItem = NSMenuItem(
+                    title: "  \(s.name)", action: #selector(focusSessionFromDock(_:)), keyEquivalent: "")
+                sItem.target = self
+                sItem.representedObject = s.id
+                menu.addItem(sItem)
+            }
+        }
+        if !finished.isEmpty {
+            if !waiting.isEmpty { menu.addItem(.separator()) }
+            let item = NSMenuItem(title: "Finished:", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            for s in finished {
+                let sItem = NSMenuItem(
+                    title: "  \(s.name)", action: #selector(focusSessionFromDock(_:)), keyEquivalent: "")
+                sItem.target = self
+                sItem.representedObject = s.id
+                menu.addItem(sItem)
+            }
+        }
+        return menu
+    }
+
+    @objc private func focusSessionFromDock(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        AppStore.shared.selectTab(id)
+        AppStore.shared.acknowledgeFinished(id)
+    }
 }
 
 struct AppCommands: Commands {
@@ -41,7 +90,7 @@ struct AppCommands: Commands {
             Button("New Session…") { store.showNewSession = true }.keyboardShortcut("n", modifiers: .command)
             Button("New CLI Tab") { store.addCLITab(to: store.focusedSessionID) }
                 .keyboardShortcut("t", modifiers: .command)
-                .disabled(store.session(store.focusedSessionID)?.kind != .cli)
+                .disabled(store.cliTabSource(for: store.focusedSessionID).flatMap { store.profile(for: $0) } == nil)
         }
         CommandMenu("Session") {
             Button("Next Tab") { store.selectAdjacentTab(1) }

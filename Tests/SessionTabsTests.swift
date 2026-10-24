@@ -259,4 +259,49 @@ final class SessionTabsTests: XCTestCase {
             XCTAssertTrue(store.terminals.view(for: session.id) === first)
         }
     }
+
+    @MainActor
+    func testCompanionBrowserTabRetainsPaneTabsAndSupportsAddCLITab() async throws {
+        try await withStore { store, _ in
+            let cliSession = store.addSession(cli("Agent"), start: false)
+            let sibling = try XCTUnwrap(store.addCLITab(to: cliSession.id, start: false))
+            var browserSession = ManagedSession(name: "Agent browser", kind: .browser)
+            browserSession.paneID = cliSession.paneID
+            browserSession.agentOwnerID = cliSession.id
+            store.addSession(browserSession, start: false)
+
+            for layout in [LayoutMode.canvas, .grid] {
+                store.settings.layoutMode = layout
+                for maximized in [false, true] {
+                    store.maximizedSessionID = maximized ? cliSession.id : nil
+                    for selected in [cliSession, browserSession, sibling, browserSession, cliSession] {
+                        store.selectTab(selected.id)
+                        let pane = try XCTUnwrap(store.pane(containing: selected.id))
+                        XCTAssertEqual(pane.tabs.map(\.id), [cliSession.id, sibling.id, browserSession.id])
+                        XCTAssertEqual(pane.activeSession.id, selected.id)
+                        XCTAssertTrue(pane.showsTabBar)
+                        XCTAssertEqual(store.panes.count, 1)
+                        XCTAssertEqual(store.maximizedSessionID, maximized ? selected.id : nil)
+                    }
+                }
+            }
+            store.selectTab(browserSession.id)
+            XCTAssertEqual(store.cliTabSource(for: browserSession.id)?.id, cliSession.id)
+
+            let newCLITab = try XCTUnwrap(store.addCLITab(to: browserSession.id, start: false))
+            XCTAssertEqual(newCLITab.paneID, cliSession.paneID)
+            XCTAssertEqual(newCLITab.kind, .cli)
+        }
+    }
+
+    func testStandaloneBrowserOmitsTabBarButBrowserGroupsKeepIt() {
+        let browser = ManagedSession(name: "Browser", kind: .browser)
+        var sibling = ManagedSession(name: "Another browser", kind: .browser)
+        sibling.paneID = browser.paneID
+        XCTAssertFalse(SessionPane.grouped([browser], selectedTabs: [:])[0].showsTabBar)
+        for selected in [browser, sibling] {
+            let pane = SessionPane.grouped([browser, sibling], selectedTabs: [browser.paneID: selected.id])[0]
+            XCTAssertTrue(pane.showsTabBar)
+        }
+    }
 }

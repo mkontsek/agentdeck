@@ -95,4 +95,65 @@ final class AppStoreTests: XCTestCase {
             XCTAssertTrue(store.callTool(name: "recruit_session", args: ["name": "Other"], caller: session.id).isError)
         }
     }
+
+    @MainActor
+    func testDesktopNotificationStateWaitingForInputAndFinished() async throws {
+        try await withStore { store, _ in
+            let agent1 = store.addSession(ManagedSession(name: "Agent 1", kind: .cli), start: false)
+            let agent2 = store.addSession(ManagedSession(name: "Agent 2", kind: .cli), start: false)
+
+            // Initially none
+            XCTAssertEqual(store.desktopNotificationState, .none)
+            XCTAssertNil(store.desktopNotificationState.badgeLabel)
+
+            // Agent 1 asks a question -> waiting for input
+            store.setStatus(agent1.id, .waitingForUser)
+            XCTAssertEqual(store.desktopNotificationState, .waitingForInput(count: 1))
+            XCTAssertEqual(store.desktopNotificationState.badgeLabel, "?")
+
+            // Agent 2 also asks a question
+            store.setStatus(agent2.id, .waitingForUser)
+            XCTAssertEqual(store.desktopNotificationState, .waitingForInput(count: 2))
+            XCTAssertEqual(store.desktopNotificationState.badgeLabel, "2?")
+
+            // Agent 1 gets answered and works
+            store.setStatus(agent1.id, .working)
+            XCTAssertEqual(store.desktopNotificationState, .waitingForInput(count: 1))
+
+            // Agent 2 also works
+            store.setStatus(agent2.id, .working)
+            XCTAssertEqual(store.desktopNotificationState, .none)
+
+            // Agent 1 was working and now finishes (becomes idle) while unfocused or in background
+            store.focusedSessionID = agent2.id
+            store.setStatus(agent1.id, .idle)
+            XCTAssertEqual(store.desktopNotificationState, .finished(count: 1))
+            XCTAssertEqual(store.desktopNotificationState.badgeLabel, "✓")
+
+            // Agent 2 also finishes (exits)
+            store.focusedSessionID = nil
+            store.setStatus(agent2.id, .exited)
+            XCTAssertEqual(store.desktopNotificationState, .finished(count: 2))
+            XCTAssertEqual(store.desktopNotificationState.badgeLabel, "2✓")
+
+            // Acknowledging Agent 1 leaves Agent 2
+            store.acknowledgeFinished(agent1.id)
+            XCTAssertEqual(store.desktopNotificationState, .finished(count: 1))
+
+            // Agent 1 starts working and asks for input: waitingForInput overrides finished
+            store.setStatus(agent1.id, .waitingForUser)
+            XCTAssertEqual(store.desktopNotificationState, .waitingForInput(count: 1))
+            XCTAssertEqual(store.desktopNotificationState.badgeLabel, "?")
+
+            // Agent 1 stops waiting
+            store.setStatus(agent1.id, .idle)
+            // Still Agent 2 finished
+            XCTAssertEqual(store.desktopNotificationState, .finished(count: 1))
+
+            // Acknowledging Agent 2 clears all
+            store.acknowledgeFinished(agent2.id)
+            XCTAssertEqual(store.desktopNotificationState, .none)
+            XCTAssertNil(store.desktopNotificationState.badgeLabel)
+        }
+    }
 }

@@ -25,6 +25,7 @@ final class AppStore: ObservableObject {
     }
     @Published var cliProfiles: [CLIProfile] = CLIProfile.builtins { didSet { if loaded { scheduleSave() } } }
     @Published var selectedPaneTabs: [UUID: UUID] = [:]
+    @Published var finishedSessionIDs: Set<UUID> = []
     @Published var focusedSessionID: UUID? {
         didSet {
             guard loaded else { return }
@@ -32,6 +33,9 @@ final class AppStore: ObservableObject {
                 selectedPaneTabs[session.paneID] = id
                 if maximizedSessionID != nil { maximizedSessionID = id }
                 raisePane(id)
+                if isAppActive {
+                    acknowledgeFinished(id)
+                }
             }
             scheduleSave()
         }
@@ -84,7 +88,8 @@ final class AppStore: ObservableObject {
         guard !bootstrapped else { return }
         bootstrapped = true
         applyAppearance()
-        appearanceObserver = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+        appearanceObserver = (NSApp as NSApplication?)?.observe(\.effectiveAppearance, options: [.new]) {
+            [weak self] _, _ in
             Task { @MainActor in self?.applyTerminalTheme() }
         }
         startMCP()
@@ -159,12 +164,12 @@ final class AppStore: ObservableObject {
         if !st.unrestrictedCLIDefaultsApplied {
             cliProfiles = cliProfiles.map { $0.migratingUnrestrictedDefault() }
         }
+        cliProfiles = cliProfiles.map { $0.adoptingBriefingAndResumeDefaults() }
         // Make sure new built-in profiles show up for users with an older profile list.
         for b in CLIProfile.builtins where !cliProfiles.contains(where: { $0.id == b.id }) { cliProfiles.append(b) }
         selectedPaneTabs = st.selectedPaneTabs
         focusedSessionID = session(st.focusedSessionID)?.id
         if let focused = session(focusedSessionID) { selectedPaneTabs[focused.paneID] = focused.id }
-        cliProfiles = cliProfiles.map { $0.adoptingBriefingAndResumeDefaults() }
         for s in sessions { runtime[s.id] = SessionRuntime(status: .exited) }
     }
 
@@ -298,16 +303,16 @@ final class AppStore: ObservableObject {
             "\(id.uuidString).json"
         ).path
     }
-
-    private func writeMCPConfig(for id: UUID) throws {
-        let cfg: [String: Any] = ["mcpServers": ["agentdeck": ["type": "http", "url": mcpURL(for: id)]]]
-        let data = try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted])
-        let url = URL(fileURLWithPath: mcpConfigPath(for: id))
     func briefingPath(for id: UUID) -> String {
         storageURL.deletingLastPathComponent().appendingPathComponent("briefing").appendingPathComponent(
             "\(id.uuidString).md"
         ).path
     }
+
+    private func writeMCPConfig(for id: UUID) throws {
+        let cfg: [String: Any] = ["mcpServers": ["agentdeck": ["type": "http", "url": mcpURL(for: id)]]]
+        let data = try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted])
+        let url = URL(fileURLWithPath: mcpConfigPath(for: id))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
     }
@@ -321,21 +326,16 @@ final class AppStore: ObservableObject {
 
     func launchCommand(for s: ManagedSession, resume: Bool? = nil) -> String {
         guard let profile = profile(for: s) else { return "" }
+        let template = (resume ?? shouldResume(s)) ? (profile.resumeCommand ?? profile.command) : profile.command
         return CommandTemplate.expand(
             template,
             values: [
                 "mcpUrl": mcpURL(for: s.id), "mcpConfigPath": mcpConfigPath(for: s.id),
+                "briefingPath": briefingPath(for: s.id),
                 "sessionId": s.id.uuidString, "sessionName": s.name, "cwd": s.effectiveDirectory,
-        let template = (resume ?? shouldResume(s)) ? (profile.resumeCommand ?? profile.command) : profile.command
             ])
     }
 
-    func environment(for s: ManagedSession) -> [String: String] {
-                "briefingPath": briefingPath(for: s.id),
-        var env = ProcessInfo.processInfo.environment
-        // Nested launches: a parent Claude Code / Codex session must not leak its markers into the child.
-        for k in env.keys where k.hasPrefix("CLAUDE") || k.hasPrefix("CODEX_") { env[k] = nil }
-        env["TERM"] = "xterm-256color"
     /// The start-up briefing as a file, so a provider can take it as a system prompt instead of a typed message.
     func briefingText(for s: ManagedSession) -> String {
         var parts = [briefing(for: s)]
@@ -354,6 +354,11 @@ final class AppStore: ObservableObject {
         try Data(briefingText(for: s).utf8).write(to: url, options: .atomic)
     }
 
+    func environment(for s: ManagedSession) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        // Nested launches: a parent Claude Code / Codex session must not leak its markers into the child.
+        for k in env.keys where k.hasPrefix("CLAUDE") || k.hasPrefix("CODEX_") { env[k] = nil }
+        env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["TERM_PROGRAM"] = "AgentDeck"
         if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
@@ -361,12 +366,12 @@ final class AppStore: ObservableObject {
         env["AGENTDECK_SESSION_NAME"] = s.name
         env["AGENTDECK_MCP_URL"] = mcpURL(for: s.id)
         env["AGENTDECK_MCP_CONFIG"] = mcpConfigPath(for: s.id)
+        env["AGENTDECK_BRIEFING"] = briefingPath(for: s.id)
         env["AGENTDECK_SKILLS_FILE"] = skillsCatalogURL.path
         env["AGENTDECK_SKILL_DIRECTORIES"] =
             (try? String(data: JSONEncoder().encode(settings.skillDirectories.map(\.expandingTilde)), encoding: .utf8))
             ?? "[]"
         let additionalPaths = [
-        env["AGENTDECK_BRIEFING"] = briefingPath(for: s.id)
             NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
         ]
         env["PATH"] = ([env["PATH"] ?? ""] + additionalPaths).joined(separator: ":")
@@ -383,16 +388,18 @@ final class AppStore: ObservableObject {
         rt.pendingQuestion = nil
         rt.programState = nil
         rt.initialPromptSent = false
+        rt.resumed = false
         rt.lastOutputAt = nil
         outputTimes[id] = nil
         rt.programMessage = nil
         rt.modelName = nil
         rt.contextInfo = nil
-        rt.resumed = false
         rt.injectionReadyAt = nil
         rt.generation += 1
         rt.isRunning = true
         runtime[id] = rt
+        finishedSessionIDs.remove(id)
+        updateDesktopNotification()
         switch s.kind {
         case .cli:
             // A prior child may still be winding down after Stop or natural exit.
@@ -403,6 +410,7 @@ final class AppStore: ObservableObject {
                     throw ShellError.failed("Select an existing CLI profile before starting this session")
                 }
                 try writeMCPConfig(for: id)
+                if profile(for: s)?.supportsMCP == true { try writeBriefing(for: s) }
                 try FileManager.default.createDirectory(atPath: cwd, withIntermediateDirectories: true)
             } catch {
                 runtime[id]?.isRunning = false
@@ -410,7 +418,6 @@ final class AppStore: ObservableObject {
                 lastError = "Session could not start: \(error.localizedDescription)"
                 return
             }
-                if profile(for: s)?.supportsMCP == true { try writeBriefing(for: s) }
             let resume = shouldResume(s)
             runtime[id]?.resumed = resume
             let command = launchCommand(for: s, resume: resume)
@@ -487,6 +494,7 @@ final class AppStore: ObservableObject {
             BrowserHost.deleteProfile(s.browserProfileID)
         }
         try? FileManager.default.removeItem(atPath: mcpConfigPath(for: id))
+        try? FileManager.default.removeItem(atPath: briefingPath(for: id))
         let tabs = pane(containing: id)?.tabs ?? []
         let index = tabs.firstIndex(where: { $0.id == id }) ?? 0
         let remaining = tabs.filter { $0.id != id }
@@ -494,12 +502,13 @@ final class AppStore: ObservableObject {
         sessions.removeAll { $0.id == id }
         runtime[id] = nil
         pendingInjections[id] = nil
-        try? FileManager.default.removeItem(atPath: briefingPath(for: id))
         if selectedPaneTabs[s.paneID] == id { selectedPaneTabs[s.paneID] = replacement }
         if remaining.isEmpty { selectedPaneTabs[s.paneID] = nil }
         if maximizedSessionID == id { maximizedSessionID = replacement }
         if focusedSessionID == id { focusedSessionID = replacement ?? sessions.first?.id }
         for i in tasks.indices where tasks[i].ownerSessionID == id { tasks[i].ownerSessionID = nil }
+        finishedSessionIDs.remove(id)
+        updateDesktopNotification()
         addLog(source: "app", message: "session \"\(s.name)\" removed")
         scheduleSave()
         // A CLI session's private browser goes with it, profile included.
@@ -510,6 +519,7 @@ final class AppStore: ObservableObject {
 
     func setStatus(_ id: UUID, _ st: SessionStatus) {
         guard var rt = runtime[id], rt.status != st else { return }
+        let oldStatus = rt.status
         rt.status = st
         rt.statusSince = Date()
         runtime[id] = rt
@@ -517,6 +527,67 @@ final class AppStore: ObservableObject {
         case .waitingForUser, .stalled, .quotaWarning, .error:
             addLog(source: name(of: id), message: "status: \(st.label)", level: st == .error ? .error : .warn)
         default: break
+        }
+
+        if let s = session(id), s.kind == .cli {
+            if (oldStatus == .working || oldStatus == .starting || oldStatus == .stalled)
+                && (st == .idle || st == .exited)
+            {
+                let isForegroundSession = isAppActive && focusedSessionID == id
+                if !isForegroundSession {
+                    finishedSessionIDs.insert(id)
+                    if !isAppActive {
+                        (NSApp as NSApplication?)?.requestUserAttention(.informationalRequest)
+                    }
+                }
+            } else if st == .waitingForUser {
+                if !isAppActive {
+                    (NSApp as NSApplication?)?.requestUserAttention(.informationalRequest)
+                }
+            } else if st == .working || st == .starting {
+                finishedSessionIDs.remove(id)
+            }
+            updateDesktopNotification()
+        }
+    }
+
+    var isAppActive: Bool {
+        (NSApp as NSApplication?)?.isActive ?? false
+    }
+
+    var waitingForInputSessionIDs: Set<UUID> {
+        Set(sessions.filter { $0.kind == .cli && status(of: $0.id) == .waitingForUser }.map(\.id))
+    }
+
+    var desktopNotificationState: DesktopNotificationState {
+        let waiting = waitingForInputSessionIDs
+        if !waiting.isEmpty {
+            return .waitingForInput(count: waiting.count)
+        }
+        let finished = finishedSessionIDs.filter { id in
+            sessions.contains(where: { $0.id == id })
+        }
+        if !finished.isEmpty {
+            return .finished(count: finished.count)
+        }
+        return .none
+    }
+
+    func acknowledgeFinished(_ id: UUID?) {
+        guard let id else { return }
+        if finishedSessionIDs.contains(id) {
+            finishedSessionIDs.remove(id)
+            updateDesktopNotification()
+        }
+    }
+
+    func updateDesktopNotification() {
+        let label = desktopNotificationState.badgeLabel
+        if let dockTile = (NSApp as NSApplication?)?.dockTile {
+            if dockTile.badgeLabel != label {
+                dockTile.badgeLabel = label
+                dockTile.display()
+            }
         }
     }
 
@@ -532,6 +603,7 @@ final class AppStore: ObservableObject {
     }
 
     func applyAppearance() {
+        guard let app = NSApp as NSApplication? else { return }
         switch settings.appearance {
         case .system: app.appearance = nil
         case .light: app.appearance = NSAppearance(named: .aqua)
@@ -603,7 +675,6 @@ final class AppStore: ObservableObject {
         let placed = panes.map(\.activeSession).filter { $0.canvasPosition != nil }
         var y =
             placed.map { ($0.canvasPosition?.y ?? 0) + paneSize(for: $0).height }.max().map { $0 + Self.canvasSpacing }
-        guard let app = NSApp as NSApplication? else { return }
             ?? Self.canvasSpacing
         var x = Self.canvasSpacing
         var rowH = 0.0
@@ -727,8 +798,12 @@ final class AppStore: ObservableObject {
                 deliverFirstMessageIfNeeded(s)
             }
         }
+        updateDesktopNotification()
     }
 
+    /// The briefing itself lives in a file (see `briefingText`). Providers whose command takes `{briefingPath}`
+    /// get it as a system prompt and nothing is typed; others get one short pointer line. A resumed conversation
+    /// already saw its briefing and first prompt, so nothing is typed at all.
     private func deliverFirstMessageIfNeeded(_ s: ManagedSession) {
         guard var rt = runtime[s.id], rt.status.acceptsInjection, !rt.initialPromptSent else { return }
         rt.initialPromptSent = true
@@ -793,9 +868,6 @@ final class AppStore: ObservableObject {
         addLog(source: createdBy, message: "task #\(t.id) created: \(title)")
         scheduleSave()
         return t
-    /// The briefing itself lives in a file (see `briefingText`). Providers whose command takes `{briefingPath}`
-    /// get it as a system prompt and nothing is typed; others get one short pointer line. A resumed conversation
-    /// already saw its briefing and first prompt, so nothing is typed at all.
     }
 
     func updateTask(_ t: BoardTask, by source: String = "user") {
@@ -864,7 +936,7 @@ final class AppStore: ObservableObject {
         addLog(
             source: r.requestedByName,
             message: "requests a new session \"\(r.name)\" (\(r.kind.label)) — approve in the sidebar", level: .warn)
-        NSApp.requestUserAttention(.informationalRequest)
+        (NSApp as NSApplication?)?.requestUserAttention(.informationalRequest)
     }
 
     func approveRecruit(_ id: UUID) {

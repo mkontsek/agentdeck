@@ -5,7 +5,7 @@ struct PaneTabBar: View {
     let pane: SessionPane
 
     /// New tabs clone the pane's CLI session even while its private browser tab is in front.
-    private var cliAnchor: ManagedSession { pane.tabs.first { $0.kind == .cli } ?? pane.activeSession }
+    private var cliAnchor: ManagedSession { store.cliTabSource(for: pane.activeSession.id) ?? pane.activeSession }
 
     var body: some View {
         HStack(spacing: 0) {

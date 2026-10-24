@@ -162,7 +162,7 @@ struct PaneView: View {
                 onMove: { t in moveOffset = t },
                 onMoveEnd: { t in commitMove(t) })
             Divider()
-            if session.kind == .cli {
+            if self.pane.showsTabBar {
                 PaneTabBar(pane: self.pane)
                 Divider()
             }
@@ -332,8 +332,10 @@ struct PaneHeader: View {
         }
         if movable { Button("Bring to front") { store.raisePane(session.id) } }
         Divider()
-        if session.kind == .cli {
+        if store.cliTabSource(for: session.id).flatMap({ store.profile(for: $0) }) != nil {
             Button("New CLI Tab") { store.addCLITab(to: session.id) }
+        }
+        if session.kind == .cli {
             Button("Inject note…") {
                 store.focusedSessionID = session.id
                 store.showInjectSheet = true

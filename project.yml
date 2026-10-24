@@ -23,8 +23,8 @@ targets:
       properties:
         CFBundleName: AgentDeck
         CFBundleDisplayName: AgentDeck
-        CFBundleShortVersionString: "0.1.7"
-        CFBundleVersion: "0.1.7"
+        CFBundleShortVersionString: "0.1.10"
+        CFBundleVersion: "0.1.10"
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "MIT"
@@ -44,8 +44,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: false
         ENABLE_APP_SANDBOX: false
         GENERATE_INFOPLIST_FILE: false
-        MARKETING_VERSION: "0.1.7"
-        CURRENT_PROJECT_VERSION: "0.1.7"
+        MARKETING_VERSION: "0.1.10"
+        CURRENT_PROJECT_VERSION: "0.1.10"
         COMBINE_HIDPI_IMAGES: true
   AgentDeckTests:
     type: bundle.unit-test
