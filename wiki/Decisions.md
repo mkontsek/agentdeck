@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-10-25 — Pre-publication security review
+
+Before the repository went public, a second-model review (Codex, read-only) found four issues that were fixed
+rather than documented away: shell placeholder escaping now works on Unicode scalars (a quote followed by a
+combining mark is one `Character` and slipped past the grapheme-based check); skill manifests must resolve to
+regular files inside a configured directory, so a repository symlink cannot publish an arbitrary readable file as
+instructions; browser tool calls are logged without typed text, scripts or query strings because the log lives
+in `state.json`; and an agent's companion browser can no longer be switched to the shared profile, which the
+README had promised all along. Hardening from the same review: automated messages drop terminal control
+characters, `browser_eval` has a 60 s deadline, and `git worktree remove` gets `--` before the persisted path.
+Deliberately kept: unauthenticated loopback MCP (local processes are trusted, see SECURITY.md) and the
+`io.kontsek` bundle identifier.
+
+## 2026-10-25 — Browser downloads use the Mac Downloads folder
+
+Save browser downloads in the Mac Downloads directory, and keep that folder editable in Settings → General.
+WebKit does not choose a destination unless the app implements `WKDownloadDelegate`. The setting stores a path
+(`~/Downloads` by default) so an existing `state.json` gains it on decode. The alternative, always writing to
+`~/Downloads` with no setting, ignores a folder the user wants for agent and browser files. Names are forced to a
+single path component so a suggested filename cannot leave the chosen folder.
+
 ## 2026-10-22 — Private browsers for agents, no automatic broadcasts
 
 Give every CLI session its own WebKit browser inside AgentDeck, exposed through `browser_*` MCP tools, instead of

@@ -6,6 +6,16 @@ struct BrowserScriptError: Error {
     let message: String
 }
 
+/// Resumes a continuation at most once; WebKit completion handlers run on the main thread.
+@MainActor
+private final class ResumeOnce<Value> {
+    var continuation: CheckedContinuation<Value, Never>?
+    func resume(_ value: Value) {
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
+}
+
 /// One WKWebView per browser session, backed by a shared or isolated persistent website data store.
 @MainActor
 final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
@@ -18,11 +28,22 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
     @Published var canGoForward: Bool = false
 
     var onStateChange: ((UUID) -> Void)?
+    var downloadDirectory: @MainActor () -> URL
+    var onDownload: (@MainActor (DownloadEvent) -> Void)?
     private var navigationWaiters: [ObjectIdentifier: CheckedContinuation<String?, Never>] = [:]
+    private var downloads: [ObjectIdentifier: WKDownload] = [:]
+    private var downloadPaths: [ObjectIdentifier: String] = [:]
+    private var reservedPaths: Set<String> = []
 
-    init(id: UUID, profileID: UUID, url: String, keepsRenderingWhenOccluded: Bool = false) {
+    init(
+        id: UUID, profileID: UUID, url: String, keepsRenderingWhenOccluded: Bool = false,
+        downloadDirectory: @escaping @MainActor () -> URL = { DownloadLocation.directory(from: "") },
+        onDownload: (@MainActor (DownloadEvent) -> Void)? = nil
+    ) {
         self.id = id
         self.urlText = url
+        self.downloadDirectory = downloadDirectory
+        self.onDownload = onDownload
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: profileID)
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -93,16 +114,25 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         for waiter in waiters.values { waiter.resume(returning: "browser closed") }
     }
 
-    /// Evaluate JavaScript; the result is rendered as text (strings as-is, objects as JSON).
-    func evaluate(_ script: String) async -> Result<String, BrowserScriptError> {
-        await withCheckedContinuation { (c: CheckedContinuation<Result<String, BrowserScriptError>, Never>) in
+    /// Evaluate JavaScript; the result is rendered as text (strings as-is, objects as JSON). A script that does
+    /// not come back within the deadline fails instead of holding the caller's MCP connection open.
+    func evaluate(_ script: String, timeoutSeconds: Double = 60) async -> Result<String, BrowserScriptError> {
+        let once = ResumeOnce<Result<String, BrowserScriptError>>()
+        return await withCheckedContinuation { c in
+            once.continuation = c
+            let timeout = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(timeoutSeconds))
+                guard !Task.isCancelled else { return }
+                once.resume(.failure(BrowserScriptError(message: "javascript timed out after \(timeoutSeconds)s")))
+            }
             webView.evaluateJavaScript(script) { value, error in
+                timeout.cancel()
                 if let error {
                     let ns = error as NSError
                     let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
-                    c.resume(returning: .failure(BrowserScriptError(message: "javascript error: \(detail)")))
+                    once.resume(.failure(BrowserScriptError(message: "javascript error: \(detail)")))
                 } else {
-                    c.resume(returning: .success(Self.render(value)))
+                    once.resume(.success(Self.render(value)))
                 }
             }
         }
@@ -175,6 +205,52 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         finish(navigation, error: error.localizedDescription)
     }
 
+    func webView(
+        _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download, preferences)
+        } else {
+            decisionHandler(.allow, preferences)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+    ) {
+        if Self.shouldDownload(navigationResponse) {
+            decisionHandler(.download)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    private static func shouldDownload(_ navigationResponse: WKNavigationResponse) -> Bool {
+        if !navigationResponse.canShowMIMEType { return true }
+        guard let http = navigationResponse.response as? HTTPURLResponse else { return false }
+        let disposition = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
+        return disposition.contains("attachment")
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        accept(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        accept(download)
+    }
+
+    private func accept(_ download: WKDownload) {
+        download.delegate = self
+        downloads[ObjectIdentifier(download)] = download
+        let pending = navigationWaiters
+        navigationWaiters.removeAll()
+        for waiter in pending.values { waiter.resume(returning: nil) }
+    }
+
     // Open popups (OAuth windows etc.) in the same view.
     func webView(
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -185,16 +261,76 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
     }
 }
 
+extension BrowserController: WKDownloadDelegate {
+    func download(
+        _ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
+        completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
+    ) {
+        let directory = downloadDirectory()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            onDownload?(
+                .failed(
+                    "could not create download folder \(directory.path.abbreviatingHome): \(error.localizedDescription)"
+                ))
+            completionHandler(nil)
+            return
+        }
+        let destination = DownloadLocation.destinationURL(directory: directory, suggestedFilename: suggestedFilename) {
+            url in
+            reservedPaths.contains(url.path) || FileManager.default.fileExists(atPath: url.path)
+        }
+        let parent = destination.deletingLastPathComponent().standardizedFileURL.path
+        guard parent == directory.standardizedFileURL.path else {
+            onDownload?(.failed("refused a download name that left \(directory.path.abbreviatingHome)"))
+            completionHandler(nil)
+            return
+        }
+        let key = ObjectIdentifier(download)
+        downloads[key] = download
+        downloadPaths[key] = destination.path
+        reservedPaths.insert(destination.path)
+        completionHandler(destination)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        let key = ObjectIdentifier(download)
+        if let path = downloadPaths[key] {
+            onDownload?(.saved(URL(fileURLWithPath: path)))
+        }
+        release(download)
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        _ = resumeData
+        onDownload?(.failed("download failed: \(error.localizedDescription)"))
+        release(download)
+    }
+
+    private func release(_ download: WKDownload) {
+        let key = ObjectIdentifier(download)
+        if let path = downloadPaths.removeValue(forKey: key) { reservedPaths.remove(path) }
+        downloads.removeValue(forKey: key)
+    }
+}
+
 @MainActor
 final class BrowserHost {
     private(set) var controllers: [UUID: BrowserController] = [:]
     var onStateChange: ((UUID) -> Void)?
+    var downloadDirectory: @MainActor () -> URL = { DownloadLocation.directory(from: "") }
+    var onDownload: (@MainActor (DownloadEvent) -> Void)?
 
     func controller(for session: ManagedSession, sharedProfileID: UUID) -> BrowserController {
         if let c = controllers[session.id] { return c }
         let c = BrowserController(
             id: session.id, profileID: session.browserDataStoreID(sharedProfileID: sharedProfileID),
-            url: session.url ?? "about:blank", keepsRenderingWhenOccluded: session.agentOwnerID != nil)
+            url: session.url ?? "about:blank", keepsRenderingWhenOccluded: session.agentOwnerID != nil,
+            downloadDirectory: { [weak self] in
+                self?.downloadDirectory() ?? DownloadLocation.directory(from: "")
+            },
+            onDownload: { [weak self] event in self?.onDownload?(event) })
         c.onStateChange = { [weak self] id in self?.onStateChange?(id) }
         controllers[session.id] = c
         return c

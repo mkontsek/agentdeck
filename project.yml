@@ -59,6 +59,7 @@ targets:
       - path: Sources/Terminal/TerminalHost.swift
       - path: Sources/Terminal/TerminalPaneView.swift
       - path: Sources/Browser/BrowserHost.swift
+      - path: Sources/Browser/BrowserDownload.swift
       - path: Sources/Browser/BrowserPaneView.swift
       - path: Sources/Browser/BrowserAutomation.swift
       - path: Sources/Browser/BrowserScripts.swift

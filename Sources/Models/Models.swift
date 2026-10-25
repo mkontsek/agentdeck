@@ -414,6 +414,7 @@ struct AppSettings: Codable {
     var sharedBrowserProfileID: UUID = UUID()
     var openDefaultsWhenEmpty: Bool = true
     var defaultWorkingDirectory: String = "~/gitrepos"
+    var downloadDirectory: String = DownloadLocation.defaultSetting
     var skillDirectories: [String] = ["~/gitrepos", "~/.codex/skills"]
     var disabledSkillIDs: [String] = []
     var globalFontSize: Double = 11
@@ -434,7 +435,8 @@ struct AppSettings: Codable {
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case sharedBrowserProfileID, openDefaultsWhenEmpty, defaultWorkingDirectory, skillDirectories, disabledSkillIDs
+        case sharedBrowserProfileID, openDefaultsWhenEmpty, defaultWorkingDirectory, downloadDirectory,
+            skillDirectories, disabledSkillIDs
         case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, idleAfterSeconds,
             stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector, showBottomPanel, bottomPanelHeight
     }
@@ -445,6 +447,10 @@ struct AppSettings: Codable {
         sharedBrowserProfileID = c.value(.sharedBrowserProfileID, default: d.sharedBrowserProfileID)
         openDefaultsWhenEmpty = c.value(.openDefaultsWhenEmpty, default: d.openDefaultsWhenEmpty)
         defaultWorkingDirectory = c.value(.defaultWorkingDirectory, default: d.defaultWorkingDirectory)
+        let storedDownloadDirectory = c.value(.downloadDirectory, default: d.downloadDirectory)
+        downloadDirectory =
+            storedDownloadDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? d.downloadDirectory : storedDownloadDirectory
         skillDirectories = c.value(.skillDirectories, default: d.skillDirectories)
         disabledSkillIDs = c.value(.disabledSkillIDs, default: d.disabledSkillIDs)
         globalFontSize = c.value(.globalFontSize, default: d.globalFontSize)
@@ -524,9 +530,17 @@ extension String {
         return String(s).replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
-    /// Collapse the text to a single line suitable for typing into a CLI input box.
+    /// Collapse the text to a single line suitable for typing into a CLI input box. Tabs become spaces and other
+    /// control characters (ESC, Ctrl-C, …) are dropped, so an injected message is text, never key presses.
     var singleLine: String {
-        components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+        components(separatedBy: .newlines)
+            .map { line in
+                String(
+                    line.unicodeScalars.map { $0 == "\t" ? " " : $0 }
+                        .filter { !CharacterSet.controlCharacters.contains($0) }
+                )
+                .trimmingCharacters(in: .whitespaces)
+            }
             .filter { !$0.isEmpty }.joined(separator: " ")
     }
 }

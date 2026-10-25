@@ -25,6 +25,17 @@ enum SkillScanner {
         var files = Set<String>()
         var scannedDirectories = 0
         var totalBytes = 0
+        let roots = directories.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { URL(fileURLWithPath: $0.expandingTilde).standardizedFileURL.resolvingSymlinksInPath().path }
+
+        /// A symlinked SKILL.md may only point at a regular file inside one of the configured directories, so a
+        /// repository cannot turn an arbitrary readable file into "instructions".
+        func isAllowed(_ manifest: URL) -> Bool {
+            guard (try? manifest.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                return false
+            }
+            return roots.contains { manifest.path == $0 || manifest.path.hasPrefix($0 + "/") }
+        }
 
         func visit(_ directory: URL, depth: Int) {
             let directory = directory.standardizedFileURL.resolvingSymlinksInPath()
@@ -34,6 +45,10 @@ enum SkillScanner {
             let manifest = directory.appendingPathComponent("SKILL.md").resolvingSymlinksInPath()
             if manager.fileExists(atPath: manifest.path) {
                 guard files.insert(manifest.path).inserted else { return }
+                guard isAllowed(manifest) else {
+                    result.warnings.append("Skipped skill outside the configured directories: \(manifest.path)")
+                    return
+                }
                 do {
                     let handle = try FileHandle(forReadingFrom: manifest)
                     defer { try? handle.close() }

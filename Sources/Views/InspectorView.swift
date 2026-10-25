@@ -96,17 +96,23 @@ struct InspectorView: View {
             } else {
                 Section("Browser") {
                     TextField("Start URL", text: bind(s, \.url).unwrap(""))
-                    Picker(
-                        "Profile",
-                        selection: Binding(
-                            get: { s.browserProfileMode },
-                            set: { store.setBrowserProfileMode($0, for: s.id) }
-                        )
-                    ) {
-                        ForEach(BrowserProfileMode.allCases) { Text($0.label).tag($0) }
+                    if s.agentOwnerID != nil {
+                        LabeledContent("Profile", value: "Isolated (agent browser)")
+                        Text("An agent's private browser always keeps its own cookies and sign-ins.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Picker(
+                            "Profile",
+                            selection: Binding(
+                                get: { s.browserProfileMode },
+                                set: { store.setBrowserProfileMode($0, for: s.id) }
+                            )
+                        ) {
+                            ForEach(BrowserProfileMode.allCases) { Text($0.label).tag($0) }
+                        }
+                        Text("Changing profile reloads this pane. Separate account keeps its own saved sign-ins.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("Changing profile reloads this pane. Separate account keeps its own saved sign-ins.")
-                        .font(.caption).foregroundStyle(.secondary)
                     if let t = rt.title, !t.isEmpty { LabeledContent("Title", value: t) }
                     Toggle("Start at launch", isOn: bind(s, \.autoStart))
                 }

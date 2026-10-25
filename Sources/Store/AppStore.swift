@@ -229,6 +229,22 @@ final class AppStore: ObservableObject {
             self?.runtime[id]?.programState = state
             self?.runtime[id]?.programMessage = message
         }
+        browsers.downloadDirectory = { [weak self] in
+            DownloadLocation.directory(from: self?.settings.downloadDirectory ?? "")
+        }
+        browsers.onDownload = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case .saved(let url):
+                self.addLog(
+                    source: "browser",
+                    message:
+                        "saved \(url.lastPathComponent) to \(url.deletingLastPathComponent().path.abbreviatingHome)")
+            case .failed(let message):
+                self.addLog(source: "browser", message: message, level: .warn)
+                self.lastError = message
+            }
+        }
         browsers.onStateChange = { [weak self] id in
             guard let self, let c = self.browsers.controllers[id] else { return }
             self.runtime[id]?.title = c.title
@@ -460,6 +476,11 @@ final class AppStore: ObservableObject {
 
     func setBrowserProfileMode(_ mode: BrowserProfileMode, for id: UUID) {
         guard var session = session(id), session.kind == .browser, session.browserProfileMode != mode else { return }
+        // An agent's private browser is isolated by contract (README "Private browsers for agents").
+        guard session.agentOwnerID == nil else {
+            lastError = "An agent's private browser always uses its own isolated profile."
+            return
+        }
         let wasRunning = browsers.isRunning(id)
         session.browserProfileMode = mode
         updateSession(session)

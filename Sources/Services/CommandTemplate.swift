@@ -23,13 +23,9 @@ enum CommandTemplate {
                 let key = String(template[template.index(after: cursor)..<end])
                 if let value = values[key] {
                     switch quoting {
-                    case .unquoted: result += "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-                    case .single: result += value.replacingOccurrences(of: "'", with: "'\\''")
-                    case .double:
-                        for scalar in value {
-                            if "\\\"$`".contains(scalar) { result.append("\\") }
-                            result.append(scalar)
-                        }
+                    case .unquoted: result += "'" + singleQuoted(value) + "'"
+                    case .single: result += singleQuoted(value)
+                    case .double: result += doubleQuoted(value)
                     }
                     cursor = template.index(after: end)
                     continue
@@ -41,5 +37,25 @@ enum CommandTemplate {
             cursor = template.index(after: cursor)
         }
         return result
+    }
+
+    // Escaping works on Unicode scalars: a quote followed by a combining mark is one `Character`, which a
+    // grapheme-based comparison would miss while the shell still sees the quote byte.
+    private static func singleQuoted(_ value: String) -> String {
+        var result = String.UnicodeScalarView()
+        for scalar in value.unicodeScalars {
+            if scalar == "'" { result.append(contentsOf: "'\\''".unicodeScalars) } else { result.append(scalar) }
+        }
+        return String(result)
+    }
+
+    private static func doubleQuoted(_ value: String) -> String {
+        let special: Set<Unicode.Scalar> = ["\\", "\"", "$", "`"]
+        var result = String.UnicodeScalarView()
+        for scalar in value.unicodeScalars {
+            if special.contains(scalar) { result.append("\\") }
+            result.append(scalar)
+        }
+        return String(result)
     }
 }

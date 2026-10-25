@@ -104,6 +104,6 @@ enum Worktree {
 
     static func remove(repo: String, path: String) async throws {
         // Preserve uncommitted work. A dirty worktree must be handled explicitly by the user.
-        _ = try await Shell.offMain { try Shell.run(["git", "worktree", "remove", path], cwd: repo) }
+        _ = try await Shell.offMain { try Shell.run(["git", "worktree", "remove", "--", path], cwd: repo) }
     }
 }

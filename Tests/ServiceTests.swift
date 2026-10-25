@@ -11,14 +11,24 @@ final class ServiceTests: XCTestCase {
 
     func testTemplateExpansionTreatsValuesAsData() throws {
         let value = "O'Brien \"quoted\" $(printf INJECTED) `printf BAD` \\ $HOME {cwd}"
-        for template in ["printf '%s' {name}", "printf '%s' '{name}'", "printf '%s' \"{name}\""] {
-            let command = CommandTemplate.expand(template, values: ["name": value, "cwd": "wrong"])
-            XCTAssertEqual(try Shell.run(["/bin/zsh", "-c", command]), value)
+        // A quote followed by a combining mark is one grapheme cluster but still a quote byte to the shell.
+        let combining = "\"\u{0301}; printf INJECTED; printf \"\u{0301} '\u{0301}; printf BAD; printf '\u{0301}"
+        for value in [value, combining] {
+            for template in ["printf '%s' {name}", "printf '%s' '{name}'", "printf '%s' \"{name}\""] {
+                let command = CommandTemplate.expand(template, values: ["name": value, "cwd": "wrong"])
+                XCTAssertEqual(try Shell.run(["/bin/zsh", "-c", command]), value, template)
+            }
         }
         let command = CommandTemplate.expand(
             "printf '%s' 'mcp_servers.agentdeck.url=\"{url}\"'", values: ["url": "http://127.0.0.1:4820/mcp/abc"])
         XCTAssertEqual(
             try Shell.run(["/bin/zsh", "-c", command]), "mcp_servers.agentdeck.url=\"http://127.0.0.1:4820/mcp/abc\"")
+    }
+
+    func testSingleLineDropsControlCharacters() {
+        XCTAssertEqual("first\r\n  second\u{1B}[A\u{03}\tthird  \n".singleLine, "first second[A third")
+        XCTAssertEqual("\u{1B}\u{07}".singleLine, "")
+        XCTAssertEqual("plain text".singleLine, "plain text")
     }
 
     func testWorktreeCreationCollisionAndDirtyRemoval() async throws {

@@ -2,6 +2,23 @@ import Darwin
 import Foundation
 import XCTest
 
+final class BrowserLogSummaryTests: XCTestCase {
+    func testTypedTextScriptsAndQueryStringsStayOutOfTheLog() {
+        XCTAssertEqual(
+            AppStore.browserLogSummary(name: "browser_type", args: ["text": "hunter2", "selector": "#password"]),
+            "selector=#password, text=<7 chars>")
+        XCTAssertEqual(
+            AppStore.browserLogSummary(name: "browser_eval", args: ["script": "document.cookie"]),
+            "script=<15 chars>")
+        XCTAssertEqual(
+            AppStore.browserLogSummary(
+                name: "browser_navigate", args: ["url": "https://example.com/reset?token=abc#frag", "wait_ms": 10]),
+            "url=https://example.com/reset, wait_ms=10")
+        XCTAssertEqual(
+            AppStore.browserLogSummary(name: "browser_click", args: ["text": "Sign in"]), "text=Sign in")
+    }
+}
+
 final class MCPServerTests: XCTestCase {
     private static func exchange(port: UInt16, request: String) throws -> String {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)

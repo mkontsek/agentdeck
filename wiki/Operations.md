@@ -33,7 +33,7 @@ To enable the tracked pre-commit gate: `git config core.hooksPath .githooks`. Th
 
 ## Regression coverage
 
-Tests cover malformed and fragmented HTTP requests, UTF-8 byte framing, origin/host checks, live loopback requests and listener shutdown, JSON-RPC and board actions, invalid ports, stopped-session injection, shell-template quoting, large stderr, Git worktree collisions/dirty deletion, failed recruit isolation, state round trips/corruption, status heuristics, actual PTY restart/exit and stale delayed Enter, and WebKit stop/render/restart with a local HTML page.
+Tests cover malformed and fragmented HTTP requests, UTF-8 byte framing, origin/host checks, live loopback requests and listener shutdown, JSON-RPC and board actions, invalid ports, stopped-session injection, shell-template quoting, large stderr, Git worktree collisions/dirty deletion, failed recruit isolation, state round trips/corruption, status heuristics, actual PTY restart/exit and stale delayed Enter, WebKit stop/render/restart with a local HTML page, and a browser attachment saved into the configured download directory.
 
 A browser-automation test drives a companion browser end to end on a `data:` page (navigate, read, click by text, type and submit, eval, screenshot from a parked view, removal with the owner) in a throwaway window. The test target lists production source files explicitly in `project.yml`; add new `Sources` files there.
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -12,7 +13,7 @@ struct SettingsView: View {
             ProfilesSettings().tabItem { Label("CLI Profiles", systemImage: "terminal") }
             SkillsSettingsView().tabItem { Label("Skills", systemImage: "books.vertical") }
         }
-        .frame(width: 640, height: 460)
+        .frame(width: 640, height: 520)
     }
 }
 
@@ -24,6 +25,16 @@ private struct GeneralSettings: View {
             Section("Startup") {
                 Toggle("Open default sessions when the canvas is empty", isOn: $store.settings.openDefaultsWhenEmpty)
                 TextField("Default CLI directory", text: $store.settings.defaultWorkingDirectory)
+            }
+            Section("Downloads") {
+                HStack {
+                    TextField(
+                        "Download directory", text: $store.settings.downloadDirectory,
+                        prompt: Text(DownloadLocation.defaultSetting))
+                    Button("Choose…", action: chooseDownloadDirectory)
+                }
+                Text("Browser panes save files in this folder. It starts as the Mac Downloads directory.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Browser sign-ins") {
                 Text("Browser panes share AgentDeck’s saved sign-ins by default, including after restarting the app.")
@@ -67,6 +78,18 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func chooseDownloadDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.directoryURL = DownloadLocation.directory(from: store.settings.downloadDirectory)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.settings.downloadDirectory = url.standardizedFileURL.path.abbreviatingHome
     }
 }
 

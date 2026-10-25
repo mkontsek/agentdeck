@@ -26,6 +26,36 @@ final class SkillLibraryTests: XCTestCase {
         XCTAssertTrue(scan.warnings.isEmpty)
     }
 
+    func testManifestSymlinksCannotLeaveConfiguredDirectories() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let root = base.appendingPathComponent("repo/.agents/skills")
+        let secret = base.appendingPathComponent("private/secret.txt")
+        try FileManager.default.createDirectory(
+            at: secret.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("---\nname: leak\ndescription: not a skill\n---\nTOKEN=hunter2\n".utf8).write(to: secret)
+        let escaping = root.appendingPathComponent("escaping")
+        try FileManager.default.createDirectory(at: escaping, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: escaping.appendingPathComponent("SKILL.md"), withDestinationURL: secret)
+        let genuine = try writeSkill(root)
+        let shared = try writeSkill(base.appendingPathComponent("shared"), name: "shared")
+        let linked = root.appendingPathComponent("linked")
+        try FileManager.default.createDirectory(at: linked, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: linked.appendingPathComponent("SKILL.md"), withDestinationURL: shared)
+
+        let scan = SkillScanner.scan(directories: [root.path])
+        XCTAssertEqual(scan.skills.map(\.path), [genuine.path])
+        XCTAssertFalse(scan.skills.contains { $0.markdown.contains("hunter2") })
+        XCTAssertEqual(scan.warnings.count, 2)
+        XCTAssertTrue(scan.warnings.allSatisfy { $0.hasPrefix("Skipped skill outside the configured directories") })
+
+        // A link into another configured directory is fine: that is how shared skill folders are set up.
+        let both = SkillScanner.scan(directories: [root.path, shared.deletingLastPathComponent().path])
+        XCTAssertEqual(Set(both.skills.map(\.path)), Set([genuine.path, shared.path]))
+    }
+
     func testMetadataFoldedDescriptionAndQuotedNames() {
         let metadata = SkillScanner.metadata(
             in: """

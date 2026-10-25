@@ -236,10 +236,24 @@ extension AppStore {
         guard Self.browserToolNames.contains(name) else { return callTool(name: name, args: args, caller: caller) }
         guard let caller, let me = session(caller) else { return fail("Connect using a managed session's MCP URL") }
         guard me.kind == .cli else { return fail("browser tools are only available to CLI sessions") }
-        let argSummary = args.map { "\($0.key)=\(String(describing: $0.value).prefix(40))" }.sorted().joined(
-            separator: ", ")
-        addLog(source: me.name, message: "mcp \(name)(\(argSummary))")
+        addLog(source: me.name, message: "mcp \(name)(\(Self.browserLogSummary(name: name, args: args)))")
         return await callBrowserTool(name: name, args: args, caller: caller)
+    }
+
+    /// The log is persisted in state.json, so typed text (passwords, tokens) and scripts are summarised by
+    /// length only and URLs lose their query string.
+    static func browserLogSummary(name: String, args: [String: Any]) -> String {
+        args.map { key, value -> String in
+            switch key {
+            case "text" where name == "browser_type", "script":
+                return "\(key)=<\(String(describing: value).count) chars>"
+            case "url":
+                let url = String(describing: value)
+                return "url=\(url.split(separator: "?", maxSplits: 1)[0].split(separator: "#", maxSplits: 1)[0])"
+            default:
+                return "\(key)=\(String(describing: value).prefix(40))"
+            }
+        }.sorted().joined(separator: ", ")
     }
 
     private func ok(_ obj: Any) -> ToolResult {
