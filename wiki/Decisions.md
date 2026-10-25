@@ -1,78 +1,56 @@
 # Decisions
 
-## 2026-10-25 — Pre-publication security review
+Each entry records what was chosen, the alternative, and the consequence. Newest first.
 
-Before the repository went public, a second-model review (Codex, read-only) found four issues that were fixed
-rather than documented away: shell placeholder escaping now works on Unicode scalars (a quote followed by a
-combining mark is one `Character` and slipped past the grapheme-based check); skill manifests must resolve to
-regular files inside a configured directory, so a repository symlink cannot publish an arbitrary readable file as
-instructions; browser tool calls are logged without typed text, scripts or query strings because the log lives
-in `state.json`; and an agent's companion browser can no longer be switched to the shared profile, which the
-README had promised all along. Hardening from the same review: automated messages drop terminal control
-characters, `browser_eval` has a 60 s deadline, and `git worktree remove` gets `--` before the persisted path.
-Deliberately kept: unauthenticated loopback MCP (local processes are trusted, see SECURITY.md) and the
-`io.kontsek` bundle identifier.
+## 2026-10-25: Pre-publication security review
 
-## 2026-10-25 — Browser downloads use the Mac Downloads folder
+- A read-only second-model review (Codex) found four issues; all were fixed, none documented away.
+- Shell placeholder escaping works on Unicode scalars: a quote plus combining mark is one `Character` and slipped past the grapheme-based check.
+- Skill manifests must resolve to regular files inside a configured directory, so a repository symlink cannot publish an arbitrary readable file as instructions.
+- Browser tool calls are logged without typed text, scripts or query strings, because the log lives in `state.json`.
+- A companion browser can no longer switch to the shared profile, as the README had promised.
+- Hardening: automated messages drop control characters, `browser_eval` has a 60 s deadline, `git worktree remove` gets `--`.
+- Kept on purpose: unauthenticated loopback MCP (local processes are trusted, see SECURITY.md) and the `io.kontsek` bundle id.
 
-Save browser downloads in the Mac Downloads directory, and keep that folder editable in Settings → General.
-WebKit does not choose a destination unless the app implements `WKDownloadDelegate`. The setting stores a path
-(`~/Downloads` by default) so an existing `state.json` gains it on decode. The alternative, always writing to
-`~/Downloads` with no setting, ignores a folder the user wants for agent and browser files. Names are forced to a
-single path component so a suggested filename cannot leave the chosen folder.
+## 2026-10-25: Browser downloads use the Mac Downloads folder
 
-## 2026-10-22 — Private browsers for agents, no automatic broadcasts
+- WebKit picks no destination unless the app implements `WKDownloadDelegate`, so downloads go to a folder editable in Settings → General.
+- The setting stores a path (`~/Downloads` by default) so an existing `state.json` gains it on decode. A fixed `~/Downloads` would ignore the folder a user wants for agent files.
+- Names are forced to a single path component so a suggested filename cannot leave the folder.
 
-Give every CLI session its own WebKit browser inside AgentDeck, exposed through `browser_*` MCP tools, instead of
-letting agents drive the user's Chrome. Alternatives: a dedicated Chrome profile per session (only Claude Code's
-extension could use it, extension install per profile, windows outside AgentDeck) or both. The built-in browser
-works for every CLI, keeps all agent browsing inside AgentDeck and isolates agents from the user and from each
-other with per-session data stores. Consequence: capability is narrower than a full extension (no console or
-network inspection yet); hidden tabs are parked in-window and occlusion detection is disabled via a private
-WebKit selector, guarded by `responds(to:)`.
+## 2026-10-22: Private browsers for agents, no automatic broadcasts
 
-Remove the periodic status broadcast (`contextTick`, its settings and the interval). Every injected summary cost
-each agent a turn and interrupted its work; with several sessions it was constant noise. Summaries now go out
-only on explicit request or in the one-time start-up briefing.
+- Every CLI session gets its own WebKit browser inside AgentDeck through `browser_*` MCP tools, instead of driving the user's Chrome.
+- Alternatives: a Chrome profile per session (only Claude Code's extension could use it, per-profile extension installs, windows outside AgentDeck), or both.
+- The built-in browser serves every CLI, keeps browsing inside AgentDeck and isolates agents from the user and each other with per-session data stores.
+- Consequence: narrower than a full extension (no console or network inspection yet). Hidden tabs park in-window; occlusion detection is disabled via a private WebKit selector guarded by `responds(to:)`.
+- The periodic status broadcast (`contextTick`, its settings and interval) is gone: each summary cost every agent a turn and became constant noise. Summaries go out only on request or in the start-up briefing.
+- PTY output stays out of published state and the stats strip is laid out on every pane: both were full-window re-renders that showed as typing lag and focus flicker.
 
-Keep PTY output out of published state and lay out the stats strip on every pane: both were full-window
-SwiftUI re-renders (per output chunk, and a terminal resize on every focus change) that showed up as typing lag
-and focus flicker.
+## 2026-10-22: CLI tabs inside mini-windows
 
-## 2026-10-22 — CLI tabs inside mini-windows
+- Sessions stay the orchestration and process boundary; a persisted pane UUID groups them for presentation. MCP callers and task ownership are unchanged; legacy sessions keep separate windows.
+- The selected session persists per pane, geometry is shared across tabs, hidden PTY views are retained.
+- New Tab shares directory and worktree and starts a fresh conversation without the initial prompt or orchestrator role. New Session still creates a separate pane. A referenced worktree cannot be deleted by closing one tab.
 
-Keep sessions as the orchestration and process boundary; group them by a persisted pane UUID for presentation.
-This preserves existing MCP callers and task ownership while allowing independent instances of one CLI in a
-single mini-window. Legacy sessions retain separate windows. Persist the selected session per pane, synchronize
-geometry across its tabs, and retain the native PTY views while hidden. New Tab shares the working directory
-and worktree; it starts a fresh conversation without repeating the initial prompt or orchestrator role.
-New Session remains available for separate panes. A referenced worktree cannot be deleted by closing one tab.
+## 2026-10-22: Shared browser sign-ins
 
-## 2026-10-22 — Shared browser sign-ins
+- One persistent AgentDeck WebKit profile is the default for existing and new browser panes; its UUID lives in settings.
+- Each pane keeps its previous isolated UUID so Separate account restores old login data. No cookies are merged and no Chrome profile is imported.
+- Profile switches recreate only running views; removing a shared pane cannot delete the shared profile. Per-pane isolation stays an explicit choice.
+- The startup collection now picks one interface per provider, CLI preferred, superseding the all-CLI-and-browser collection below.
 
-Use one persistent AgentDeck WebKit profile by default for both existing and new browser panes. Store its UUID
-in settings; preserve each pane's previous isolated UUID so Separate account can restore its old login data.
-Do not merge authentication cookies or import Chrome profiles. Profile switches recreate only running browser
-views, and removing a shared pane cannot delete the shared profile. This replaces the earlier per-pane isolation
-default while retaining it as an explicit choice for separate accounts.
+## 2026-10-22: Startup collection and shared skill folders
 
-The startup collection now chooses one interface per provider (CLI preferred), superseding the original
-all-CLI-and-browser collection described below.
+- An empty launch seeds one pane per built-in CLI and browser preset; stored sessions are never duplicated. A setting disables it; removing the last pane does not recreate it.
+- Antigravity uses the official `agy` executable, Grok Build uses `grok`. Missing clients stay visible with setup links instead of being installed.
+- Skills are shared through a generated catalog, local paths and two MCP tools, without rewriting provider settings or installing plugins. Native slash commands are out of scope; browser chats get instructions only by copy and paste.
+- Scanning is bounded, off the main actor, deduplicated by canonical path, and the read tool rejects arbitrary paths.
 
-## 2026-10-22 — Startup collection and shared skill folders
+## 2026-10-22: Correctness review and regression checks
 
-An empty launch seeds one pane per built-in agent CLI and browser preset; stored sessions are never duplicated. A setting can disable this, and removing the last pane does not immediately recreate it. Antigravity uses the official `agy` executable; Grok Build uses `grok`. Missing clients remain visible with setup links instead of being installed automatically.
-
-Share selected skills through a generated catalog, local file paths and two MCP tools. This supports multiple CLI providers without rewriting their global settings or silently installing provider-specific plugins. Native slash-command registration is outside this integration. Browser chats receive instructions only through explicit copy/paste. Scan bounded directories off the main actor, deduplicate canonical paths and reject arbitrary paths in the read tool.
-
-## 2026-10-22 — Correctness review and regression checks
-
-Keep the current app structure and macOS deployment target. Enable complete concurrency checking without forcing a Swift 6 migration. Main-actor ownership gives the small local MCP listener one clear synchronization boundary. Bounded HTTP requests make this practical; it is not intended for high-throughput remote service use.
-
-Use one request per HTTP connection to avoid response reordering and reentrant pipelined mutations. Clients reconnect normally. Native clients do not need CORS; reject foreign origins as required by the [MCP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
-
-Capture subprocess streams in temporary files instead of sequential blocking pipes. Git work happens off the UI actor. This avoids stream deadlocks without adding a subprocess dependency; cancellation/timeouts for arbitrary long-running Git hooks remain a future improvement.
-
-Run XCTest as a hostless bundle compiling the relevant production sources. Launching the ordinary app as a test host would load personal state and auto-start real agents. Tests use injected temporary storage, disposable repositories and browser profiles.
-
-Swift guidance follows the [Swift API guidelines](https://www.swift.org/documentation/api-design-guidelines/) and [concurrency model](https://docs.swift.org/swift-book/LanguageGuide/Concurrency.html). The reusable `swift-best-practices` skill is installed in the user's Codex skills directory.
+- Keep the app structure and macOS target; enable complete concurrency checking without a Swift 6 migration. Main-actor ownership gives the loopback MCP listener one synchronization boundary; bounded requests make that practical. It is not a high-throughput remote service.
+- One request per connection avoids response reordering and reentrant pipelined mutations; clients reconnect. Foreign origins are rejected per the [MCP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports); native clients need no CORS.
+- Subprocess streams are captured in temporary files, Git runs off the UI actor. Cancellation and timeouts for long-running Git hooks remain future work.
+- XCTest runs as a hostless bundle compiling the relevant sources; the app as test host would load personal state and auto-start real agents. Tests use temporary storage, disposable repositories and browser profiles.
+- Swift guidance: the [API guidelines](https://www.swift.org/documentation/api-design-guidelines/) and [concurrency model](https://docs.swift.org/swift-book/LanguageGuide/Concurrency.html); the `swift-best-practices` skill lives in the user's Codex skills directory.

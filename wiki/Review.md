@@ -1,6 +1,8 @@
-# Code review — 2026-10-22
+# Code review, 2026-10-22
 
-The baseline Debug build succeeded, but that alone did not establish correctness. Complete concurrency checking exposed unsafe captures, and review found missing error handling and lifecycle checks. The changes below address reproducible failures.
+A green Debug build proved little: complete concurrency checking exposed unsafe captures, and review found missing error handling and lifecycle checks. Every finding below reproduced and was fixed.
+
+## 1. Findings
 
 | Finding | Resolution |
 | --- | --- |
@@ -18,10 +20,14 @@ The baseline Debug build succeeded, but that alone did not establish correctness
 | Corrupt state and write failures disappeared silently | Preserve unreadable state, stop overwriting it, report failures |
 | Build output piped to tail masked compiler failure | Explicit Bash pipefail; tested with a failing compiler stub on macOS Make |
 
-## Evidence and limits
+## 2. Evidence
 
-Twenty-five XCTest tests pass, including actual local HTTP, PTY and WebKit activity, default-session persistence, and shared skill loading. Strict `swift-format` lint passes. Debug and Release builds are part of verification; complete concurrency checking is enabled. The skill's frontmatter/scaffold validator passes.
+- Twenty-five XCTest tests passed at the time, with real local HTTP, PTY and WebKit activity, default-session persistence and shared skill loading.
+- Strict `swift-format` lint passes; Debug and Release builds are part of verification; complete concurrency checking is on.
+- The skill's frontmatter/scaffold validator passes.
 
-Provider login, paid CLI/model turns, interactive canvas/keyboard behavior, Intel hardware and macOS 14 runtime were not exercised. See [[Operations]] for manual acceptance checks.
+## 3. Limits
 
-Remaining design limits: local processes are trusted rather than authenticated; status detection is heuristic; Git hooks can run indefinitely because subprocess timeout/cancellation is not yet implemented. These are not claims of full security isolation or exhaustive end-to-end coverage.
+- Not exercised: provider login, paid CLI/model turns, interactive canvas/keyboard behavior, Intel hardware, the macOS 14 runtime. See [[Operations]] for manual checks.
+- Local processes are trusted, not authenticated. Status detection is heuristic. Git hooks can run indefinitely because subprocess timeout/cancellation is not implemented.
+- None of this claims full security isolation or exhaustive end-to-end coverage. The 2026-10-25 pre-publication review is recorded in [[Decisions]].
