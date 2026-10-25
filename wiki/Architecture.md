@@ -77,14 +77,14 @@ or the selected tab). `Sources/Browser/BrowserAutomation.swift` implements the t
 only on the caller's own companion; browser sessions cannot call them. Companions are excluded from status
 summaries, listed with `agent_browser_of` in `list_sessions`, and removed (profile deleted) with their owner.
 
-`BrowserController` exposes `navigate` (waits for the matching `WKNavigation`, 20 s timeout), `evaluate`
+`BrowserController` exposes `navigate` (waits for the matching `WKNavigation`, 20 s timeout), `evaluate` (60 s deadline, resumed once)
 (JavaScript result rendered as text/JSON) and `snapshot` (PNG). A hidden companion has no superview, so
 `ensureInWindow` parks it off-screen inside the main window; WebKit's private occlusion detection is disabled for
 companions so they keep rendering while other apps cover AgentDeck. Screenshots still require the window to exist.
 
 ## Skill directories
 
-Settings persist configured root directories and disabled skill IDs (canonical manifest paths). Repository roots resolve conventional skill containers; a direct skills folder or individual package is also supported. Scanning follows symlinks with canonical-path deduplication, skips build/vendor folders, and limits depth, directory count, file size and aggregate content. It does not execute scripts. `SKILL.md` name/description frontmatter is read without adding a YAML dependency; quoted scalars and folded/literal descriptions are supported.
+Settings persist configured root directories and disabled skill IDs (canonical manifest paths). Repository roots resolve conventional skill containers; a direct skills folder or individual package is also supported. Scanning follows symlinks with canonical-path deduplication, but a manifest must resolve to a regular file inside one of the configured directories (a link into another configured folder is fine, a link to `~/.ssh` is skipped with a warning). It skips build/vendor folders and limits depth, directory count, file size and aggregate content. It does not execute scripts. `SKILL.md` name/description frontmatter is read without adding a YAML dependency; quoted scalars and folded/literal descriptions are supported.
 
 `SkillLibrary` caches instructions, publishes UI state, and writes an atomic Markdown catalog. Reload tasks are cancelled when superseded; removed/disabled skills are unavailable to MCP immediately during reload. `list_skills` exposes enabled metadata; `read_skill` accepts only an exact enabled ID, never an arbitrary filesystem path. The catalog is exported through child environment variables and the briefing file. Native provider configuration is unchanged. Browser use is explicit copying of instructions.
 

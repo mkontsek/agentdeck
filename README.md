@@ -222,8 +222,11 @@ Sessions are addressed by name, id, id prefix or `"me"`.
 
 Agents never use your own browser. The first `browser_*` call from a CLI session opens a WebKit tab beside its
 terminal (named `<session> browser`, globe icon) with its own isolated website data store, so sessions cannot see
-each other's cookies or sign-ins either. The tab is created without stealing focus; click it to watch or help, for
-example to sign in once. Removing the CLI session removes its browser and deletes the profile.
+each other's cookies or sign-ins either; that profile cannot be switched to the shared one. The tab is created
+without stealing focus; click it to watch or help, for example to sign in once. Removing the CLI session removes
+its browser and deletes the profile. The orchestration log records browser tool calls without the typed text or
+scripts. This separates agents' web sessions from each other and from you; it is not a sandbox, see
+[SECURITY.md](SECURITY.md).
 
 - `browser_navigate` loads a URL and waits for it; `browser_read` returns the visible text, links or HTML;
   `browser_click` targets a CSS selector or visible text; `browser_type` fills a field and can press Enter;

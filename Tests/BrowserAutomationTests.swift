@@ -39,6 +39,10 @@ final class BrowserAutomationTests: XCTestCase {
         XCTAssertEqual(store.focusedSessionID, agent.id, "opening the browser must not steal focus")
         XCTAssertEqual(store.selectedPaneTabs[agent.paneID], agent.id, "terminal tab stays in front")
         XCTAssertNil(store.agentBrowser(for: other.id), "other sessions get their own browser only on use")
+        store.setBrowserProfileMode(.shared, for: companion.id)
+        XCTAssertEqual(store.session(companion.id)?.browserProfileMode, .isolated, "companions stay isolated")
+        XCTAssertNotNil(store.lastError)
+        store.lastError = nil
         XCTAssertTrue(store.toolDefinitions(caller: agent.id).contains { ($0["name"] as? String) == "browser_read" })
         XCTAssertFalse(store.contextSummary(for: agent).contains(companion.name))
 
