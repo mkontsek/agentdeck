@@ -84,15 +84,16 @@ struct CanvasView: View {
 
 private struct DotGrid: View {
     var body: some View {
+        // Matches the canvas rendering on kontsek.io/agentdeck: 16 pt pitch, visible but quieter than text.
         Canvas { ctx, size in
-            let step: CGFloat = 24
+            let step: CGFloat = 16
             var x: CGFloat = step
             while x < size.width {
                 var y: CGFloat = step
                 while y < size.height {
                     ctx.fill(
                         Path(ellipseIn: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)),
-                        with: .color(.secondary.opacity(0.18)))
+                        with: .color(.secondary.opacity(0.3)))
                     y += step
                 }
                 x += step
