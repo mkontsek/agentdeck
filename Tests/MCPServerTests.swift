@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 final class BrowserLogSummaryTests: XCTestCase {
+    @MainActor
     func testTypedTextScriptsAndQueryStringsStayOutOfTheLog() {
         XCTAssertEqual(
             AppStore.browserLogSummary(name: "browser_type", args: ["text": "hunter2", "selector": "#password"]),
