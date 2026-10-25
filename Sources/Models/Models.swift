@@ -534,12 +534,16 @@ extension String {
     /// control characters (ESC, Ctrl-C, …) are dropped, so an injected message is text, never key presses.
     var singleLine: String {
         components(separatedBy: .newlines)
-            .map { line in
-                String(
-                    line.unicodeScalars.map { $0 == "\t" ? " " : $0 }
-                        .filter { !CharacterSet.controlCharacters.contains($0) }
-                )
-                .trimmingCharacters(in: .whitespaces)
+            .map { line -> String in
+                var scalars = String.UnicodeScalarView()
+                for scalar in line.unicodeScalars {
+                    if scalar == "\t" {
+                        scalars.append(" ")
+                    } else if !CharacterSet.controlCharacters.contains(scalar) {
+                        scalars.append(scalar)
+                    }
+                }
+                return String(scalars).trimmingCharacters(in: .whitespaces)
             }
             .filter { !$0.isEmpty }.joined(separator: " ")
     }
