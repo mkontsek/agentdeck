@@ -34,6 +34,8 @@ extension AppStore {
         tab.fontSizeOverride = source.fontSizeOverride
         tab.autoInjectContext = source.autoInjectContext
         tab.autoStart = source.autoStart
+        // A tab is a second agent, not the same conversation: it must not reopen the directory's last transcript.
+        tab.resumeLastConversation = false
         return addSession(tab, start: start)
     }
 

@@ -46,7 +46,8 @@ pane per group; position, size and z-order changes apply to all members. Removin
 retaining the pane's identity even when its original session is removed. Closing the last tab removes the pane.
 
 `SessionTabs` creates a fresh session using the source's CLI, directory/worktree and font/launch preferences;
-initial prompts and orchestrator roles are not copied. Each tab retains its own runtime, PTY, MCP URL and tasks.
+initial prompts and orchestrator roles are not copied, and `resumeLastConversation` is off so a tab never reopens
+the transcript its neighbour is already in. Each tab retains its own runtime, PTY, MCP URL and tasks.
 `TerminalRepresentable` detaches hidden native views without stopping their processes, clears stale child views,
 and restores keyboard focus when the selected terminal attaches. Worktree deletion refuses paths referenced by
 another session. New Session continues to create an independent pane.
@@ -60,6 +61,12 @@ previous individual login data. `BrowserHost` resolves the effective store ident
 Switching mode recreates only a running browser pane; stopped panes remain stopped. Removing a shared pane never
 deletes the shared data store. Explicit isolated-profile deletion is guarded against deleting a shared/referenced store.
 No cookies are copied from Chrome or merged across old profiles. WebKit enforces normal cookie/origin boundaries.
+
+Browser downloads use `AppSettings.downloadDirectory`. An empty or missing value resolves to the Mac Downloads
+directory. Settings → General edits the path or picks a folder. `BrowserController` accepts a `WKDownload` when a
+navigation asks to download or the response cannot be shown, including `Content-Disposition: attachment`. The file
+name is one path component inside that folder; an existing name gets a ` (n)` suffix. The folder is created when
+the download starts. A successful save is logged. A failure is logged and shown as an alert.
 
 ## Agent browsers
 

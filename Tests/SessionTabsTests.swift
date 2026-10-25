@@ -51,6 +51,9 @@ final class SessionTabsTests: XCTestCase {
             XCTAssertFalse(tab.isOrchestrator)
             XCTAssertFalse(tab.autoInjectContext)
             XCTAssertFalse(tab.autoStart)
+            XCTAssertTrue(original.resumeLastConversation)
+            XCTAssertFalse(tab.resumeLastConversation)
+            XCTAssertFalse(store.shouldResume(tab))
             XCTAssertEqual(store.focusedSessionID, tab.id)
             XCTAssertEqual(store.maximizedSessionID, tab.id)
             XCTAssertEqual(store.panes.count, 1)
@@ -235,7 +238,8 @@ final class SessionTabsTests: XCTestCase {
             XCTAssertTrue(store.terminals.isRunning(tab.id))
             let firstGeneration = store.runtime[session.id]?.generation
             store.terminals.send(id: session.id, text: "hidden-output\r")
-            for _ in 0..<100 {
+            // The login shell may take seconds to start on a loaded machine; the loop exits as soon as it answers.
+            for _ in 0..<500 {
                 if store.terminals.visibleLines(id: session.id).contains(where: {
                     $0.contains("received:hidden-output")
                 }) {

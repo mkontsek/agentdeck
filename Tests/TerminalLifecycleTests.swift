@@ -14,7 +14,8 @@ final class TerminalLifecycleTests: XCTestCase {
         }
         let output = directory.appendingPathComponent("received.txt")
         let command =
-            "read -r line; printf '%s' \"$line\" > " + CommandTemplate.expand("{file}", values: ["file": output.path])
+            "printf 'ready\\n'; read -r line; printf '%s' \"$line\" > "
+            + CommandTemplate.expand("{file}", values: ["file": output.path])
         store.cliProfiles.append(CLIProfile(id: "test", name: "Test", command: command, submitDelayMs: 500))
         var session = ManagedSession(name: "Lifecycle", kind: .cli)
         session.cliProfileID = "test"
@@ -27,11 +28,16 @@ final class TerminalLifecycleTests: XCTestCase {
         store.restartSession(session.id)
         let newView = try XCTUnwrap(store.terminals.view(for: session.id))
         XCTAssertFalse(oldView === newView)
+        // Outlast the old 500 ms submit delay, then wait until the replacement shell is actually reading: an
+        // interactive zsh flushes type-ahead while it starts, and a loaded machine can take seconds to get there.
         try await Task.sleep(for: .milliseconds(800))
+        for _ in 0..<500 where !store.terminals.visibleLines(id: session.id).contains(where: { $0.contains("ready") }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertTrue(store.runtime[session.id]?.isRunning == true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), "Old Enter reached the new shell")
         XCTAssertTrue(store.inject(session.id, text: "new input"))
-        for _ in 0..<100 where store.runtime[session.id]?.isRunning == true {
+        for _ in 0..<500 where store.runtime[session.id]?.isRunning == true {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(try String(contentsOf: output, encoding: .utf8), "new input")

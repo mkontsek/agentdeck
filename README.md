@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="AgentDeck icon">
+</p>
+
 # AgentDeck
+
+macOS 14+ · Swift / SwiftUI · MIT · [kontsek.io/agentdeck](https://kontsek.io/agentdeck)
 
 A native macOS app (Swift + SwiftUI) that acts as a visual orchestration layer for several AI agents at once.
 It launches and owns real CLI agents (Claude Code, Codex, Gemini CLI, Antigravity, Grok, plain shells, …) in embedded
@@ -91,7 +97,8 @@ keep running. Click a tab or select its session in the sidebar to reveal it. **�
 and a tab's **×** closes just that session. Closing the last tab removes its mini-window.
 Position, size, tab order and selected tabs persist across launches, including in Grid and maximized views.
 **⌘N** still creates a separate mini-window. New tabs inherit font and launch preferences, but do not repeat
-the original prompt or inherit the orchestrator role. Tabs opened from a worktree share that worktree;
+the original prompt or inherit the orchestrator role, and they always start a fresh conversation instead of
+resuming the directory's last one. Tabs opened from a worktree share that worktree;
 remove other sessions using it before requesting worktree deletion.
 
 ### Status badges
@@ -320,6 +327,13 @@ See [Codex image generation](https://learn.chatgpt.com/docs/image-generation) an
 | `scripts/make-icon.swift` | renders the app icon; `make icon` rebuilds `Resources/AppIcon.icns` |
 | `~/Library/Application Support/AgentDeck/` | `state.json`, per-session `mcp/*.json` |
 | `~/.agentdeck/worktrees/` | default worktree root (Settings) |
+| `~/Downloads` | default folder for browser downloads (Settings → General) |
+
+## Downloads
+
+Browser panes save files into the folder in Settings → General. That folder starts as the Mac Downloads directory.
+Type another path or choose a folder. A file keeps its name; when that name is already there, AgentDeck adds
+` (1)`, ` (2)`, and so on. The download stays inside the chosen folder.
 
 ## Known limitations
 
@@ -336,6 +350,11 @@ See [Codex image generation](https://learn.chatgpt.com/docs/image-generation) an
 - A nested launch strips `CLAUDE*`/`CODEX_*` variables from the child environment so Claude Code does not refuse to
   start inside another Claude Code session.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the threat model, what the loopback MCP server does and does not protect
+against, and how to report a vulnerability.
+
 ## License
 
-MIT
+[MIT](LICENSE)
