@@ -259,6 +259,36 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         if let u = navigationAction.request.url { webView.load(URLRequest(url: u)) }
         return nil
     }
+
+    // macOS WebKit shows no file chooser unless the UI delegate provides one: without this, an upload button or
+    // `<input type=file>` in a page (Gemini, ChatGPT, SuperFaktura) silently does nothing.
+    func webView(
+        _ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor ([URL]?) -> Void
+    ) {
+        let panel = Self.uploadPanel(for: parameters, host: webView.url?.host)
+        let finish: @MainActor (NSApplication.ModalResponse) -> Void = { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
+        // A hidden companion browser is parked inside the main window, so the sheet still has somewhere to attach.
+        if let window = webView.window ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window) { response in MainActor.assumeIsolated { finish(response) } }
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
+    static func uploadPanel(for parameters: WKOpenPanelParameters, host: String?) -> NSOpenPanel {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canCreateDirectories = false
+        panel.prompt = "Upload"
+        panel.message =
+            "Choose \(parameters.allowsMultipleSelection ? "files" : "a file") to upload to \(host ?? "this page")"
+        return panel
+    }
 }
 
 extension BrowserController: WKDownloadDelegate {
