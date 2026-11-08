@@ -49,6 +49,13 @@ final class ConnectionArrowRenderingTests: XCTestCase {
                 XCTAssertGreaterThan(
                     pixel.redComponent - pixel.blueComponent, 0.12, "A routed segment must remain visible")
             }
+            // This fixture routes below the blocker. Verify actual clear pixels between its border and the arrow.
+            let gapPixel = try XCTUnwrap(
+                bitmap.colorAt(x: Int(405 * scale), y: Int(436 * scale))?.usingColorSpace(.sRGB))
+            for component in [gapPixel.redComponent, gapPixel.greenComponent, gapPixel.blueComponent] {
+                XCTAssertEqual(
+                    component, dark ? 0 : 1, accuracy: 0.03, "The gutter must remain visible in the native canvas")
+            }
             let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
             try data.write(to: URL(fileURLWithPath: "/tmp/agentdeck-routed-arrows-\(dark ? "dark" : "light").png"))
         }

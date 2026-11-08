@@ -27,15 +27,8 @@ final class PaneRouteCache: ObservableObject {
             guard let source = frames[edge.source], let target = frames[edge.target],
                 PaneRouteSearch.valid(source), PaneRouteSearch.valid(target), PaneRouteSearch.valid(bounds)
             else { continue }
-            let direct = PaneConnectionRoute(source: source, target: target).points
-            let clear = zip(direct, direct.dropFirst()).allSatisfy { a, b in
-                !obstacles.contains { PaneRouteSearch.crosses(a, b, interior: $0) }
-            }
-            routes[edge.target] =
-                clear
-                ? direct
-                : PaneRouteSearch.points(
-                    source: source, target: target, obstacles: obstacles, bounds: bounds)
+            routes[edge.target] = PaneRouteSearch.points(
+                source: source, target: target, obstacles: obstacles, bounds: bounds)
         }
         return routes
     }

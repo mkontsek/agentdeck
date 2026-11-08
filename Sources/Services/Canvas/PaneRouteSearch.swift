@@ -3,7 +3,8 @@ import Foundation
 /// Orthogonal visibility grid around expanded pane borders. This is geometry only: routes never
 /// move windows, change z-order or intercept input. A fully covered endpoint has no visible route.
 enum PaneRouteSearch {
-    private static let clearance: CGFloat = 3
+    private static let preferredClearance: CGFloat = 12
+    private static let compactClearance: CGFloat = 3
     private static let maximumObstacles = 128
     private static let maximumNodes = 16_384
     private struct Port {
@@ -14,9 +15,54 @@ enum PaneRouteSearch {
     static func points(source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect) -> [CGPoint]? {
         guard valid(source), valid(target), valid(bounds), obstacles.count <= maximumObstacles else { return nil }
         let obstacles = obstacles.filter(valid)
+        let direct = PaneConnectionRoute(source: source, target: target).points
+        if directIsClear(
+            direct, source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: preferredClearance)
+        {
+            return direct
+        }
+        if let spaced = search(
+            source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: preferredClearance)
+        {
+            return spaced
+        }
+        // Preserve the old visible connection when windows/canvas leave no room for a wider gutter.
+        if directIsClear(direct, source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: 0) {
+            return direct
+        }
+        return search(source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: compactClearance)
+    }
+
+    private static func directIsClear(
+        _ points: [CGPoint], source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect, clearance: CGFloat
+    ) -> Bool {
+        guard points.count >= 2,
+            points.allSatisfy({
+                $0.x >= bounds.minX && $0.x <= bounds.maxX && $0.y >= bounds.minY && $0.y <= bounds.maxY
+            })
+        else { return false }
+        for (index, pair) in zip(points, points.dropFirst()).enumerated() {
+            let (a, b) = pair
+            for obstacle in obstacles {
+                guard !crosses(a, b, interior: obstacle) else { return false }
+                // Only the straight departure/arrival may enter its own endpoint's gutter.
+                if (index == 0 && obstacle == source) || (index == points.count - 2 && obstacle == target) { continue }
+                if crosses(a, b, interior: obstacle.insetBy(dx: -clearance, dy: -clearance)) { return false }
+            }
+        }
+        return true
+    }
+
+    private static func search(
+        source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect, clearance: CGFloat
+    ) -> [CGPoint]? {
         let blocks = obstacles.map { $0.insetBy(dx: -clearance, dy: -clearance) }
-        let starts = ports(source, obstacles: obstacles).filter { free($0.outside, blocks: blocks, bounds: bounds) }
-        let ends = ports(target, obstacles: obstacles).filter { free($0.outside, blocks: blocks, bounds: bounds) }
+        let starts = ports(source, obstacles: obstacles, clearance: clearance).filter {
+            free($0.outside, blocks: blocks, bounds: bounds)
+        }
+        let ends = ports(target, obstacles: obstacles, clearance: clearance).filter {
+            free($0.outside, blocks: blocks, bounds: bounds)
+        }
         guard !starts.isEmpty, !ends.isEmpty else { return nil }
         let ports = starts + ends
         let xs = Array(
@@ -80,8 +126,9 @@ enum PaneRouteSearch {
         return nil
     }
 
-    private static func ports(_ frame: CGRect, obstacles: [CGRect]) -> [Port] {
+    private static func ports(_ frame: CGRect, obstacles: [CGRect], clearance: CGFloat) -> [Port] {
         var result: [Port] = []
+        let neighbors = obstacles.filter { $0 != frame }.map { $0.insetBy(dx: -clearance, dy: -clearance) }
         // Midpoints of exposed edge intervals also work when another window covers a normal midpoint.
         for vertical in [true, false] {
             for far in [false, true] {
@@ -89,7 +136,7 @@ enum PaneRouteSearch {
                 let low = vertical ? frame.minY : frame.minX
                 let high = vertical ? frame.maxY : frame.maxX
                 var cuts = [low, high]
-                for block in obstacles where block != frame {
+                for block in neighbors {
                     let spans =
                         vertical ? (block.minX...block.maxX).contains(fixed) : (block.minY...block.maxY).contains(fixed)
                     if spans {
@@ -105,7 +152,7 @@ enum PaneRouteSearch {
                     let edge = vertical ? CGPoint(x: fixed, y: middle) : CGPoint(x: middle, y: fixed)
                     let outward = fixed + (far ? clearance : -clearance)
                     let outside = vertical ? CGPoint(x: outward, y: middle) : CGPoint(x: middle, y: outward)
-                    guard !obstacles.contains(where: { $0 != frame && crosses(edge, outside, interior: $0) }) else {
+                    guard !neighbors.contains(where: { crosses(edge, outside, interior: $0) }) else {
                         continue
                     }
                     result.append(Port(edge: edge, outside: outside))

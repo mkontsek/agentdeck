@@ -4,6 +4,68 @@ import XCTest
 
 @MainActor
 final class ArrowRouteTests: XCTestCase {
+    func testCachedRoutesLeaveSpaceBesideWindowsIncludingDirectShortcuts() throws {
+        let source = ManagedSession(name: "Source", kind: .cli)
+        let target = ManagedSession(name: "Target", kind: .cli)
+        let connection = PaneConnection(source: source, target: target, kind: .subagent)
+        let bounds = CGRect(x: 0, y: 0, width: 900, height: 600)
+        let layouts: [(CGRect, CGRect, CGRect)] = [
+            (
+                CGRect(x: 20, y: 60, width: 180, height: 180),
+                CGRect(x: 650, y: 280, width: 180, height: 180),
+                CGRect(x: 280, y: 80, width: 250, height: 350)
+            ),
+            // The old fast path misses this obstacle by only five points.
+            (
+                CGRect(x: 20, y: 100, width: 100, height: 100),
+                CGRect(x: 600, y: 300, width: 100, height: 100),
+                CGRect(x: 365, y: 195, width: 150, height: 80)
+            ),
+            (
+                CGRect(x: 20, y: 20, width: 100, height: 100),
+                CGRect(x: 136, y: 220, width: 100, height: 100),
+                CGRect(x: 800, y: 20, width: 10, height: 10)
+            ),
+        ]
+        for (start, end, obstacle) in layouts {
+            let frames = [source.paneID: start, target.paneID: end, UUID(): obstacle]
+            let points = try XCTUnwrap(
+                PaneRouteCache().paths(connections: [connection], frames: frames, bounds: bounds)[target.paneID])
+            for (index, pair) in zip(points, points.dropFirst()).enumerated() {
+                let (a, b) = pair
+                XCTAssertFalse(
+                    PaneRouteSearch.crosses(a, b, interior: obstacle.insetBy(dx: -10, dy: -10)),
+                    "The route needs visible breathing room, not just a nonintersecting centerline")
+                if index > 0 {
+                    XCTAssertFalse(PaneRouteSearch.crosses(a, b, interior: start.insetBy(dx: -10, dy: -10)))
+                }
+                if index < points.count - 2 {
+                    XCTAssertFalse(PaneRouteSearch.crosses(a, b, interior: end.insetBy(dx: -10, dy: -10)))
+                }
+            }
+            let first = try XCTUnwrap(points.first)
+            let last = try XCTUnwrap(points.last)
+            XCTAssertTrue(
+                first.x == start.minX || first.x == start.maxX || first.y == start.minY || first.y == start.maxY)
+            XCTAssertTrue(last.x == end.minX || last.x == end.maxX || last.y == end.minY || last.y == end.maxY)
+        }
+    }
+
+    func testNarrowCanvasFallsBackToVisibleRouteWithoutCrossingWindows() throws {
+        let source = CGRect(x: 10, y: 0, width: 50, height: 140)
+        let target = CGRect(x: 240, y: 0, width: 50, height: 140)
+        let blocker = CGRect(x: 120, y: 0, width: 70, height: 134)
+        let bounds = CGRect(x: 0, y: 0, width: 300, height: 140)
+        let frames = [source, target, blocker]
+        let points = try XCTUnwrap(
+            PaneRouteSearch.points(source: source, target: target, obstacles: frames, bounds: bounds))
+        XCTAssertTrue(points.contains { $0.y >= 137 }, "Keep the arrow visible in the only six-point corridor")
+        for (a, b) in zip(points, points.dropFirst()) {
+            for frame in frames { XCTAssertFalse(PaneRouteSearch.crosses(a, b, interior: frame)) }
+        }
+        XCTAssertTrue(points.allSatisfy { $0.x >= 0 && $0.x <= 300 && $0.y >= 0 && $0.y <= 140 })
+    }
+
     func testInvalidAndOversizedRouteSearchIsBounded() {
         let source = CGRect(x: 10, y: 10, width: 50, height: 50)
         let target = CGRect(x: 300, y: 300, width: 50, height: 50)
