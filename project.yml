@@ -23,8 +23,8 @@ targets:
       properties:
         CFBundleName: AgentDeck
         CFBundleDisplayName: AgentDeck
-        CFBundleShortVersionString: "0.1.12"
-        CFBundleVersion: "0.1.12"
+        CFBundleShortVersionString: "0.1.26"
+        CFBundleVersion: "0.1.26"
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "MIT"
@@ -44,8 +44,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: false
         ENABLE_APP_SANDBOX: false
         GENERATE_INFOPLIST_FILE: false
-        MARKETING_VERSION: "0.1.12"
-        CURRENT_PROJECT_VERSION: "0.1.12"
+        MARKETING_VERSION: "0.1.26"
+        CURRENT_PROJECT_VERSION: "0.1.26"
         COMBINE_HIDPI_IMAGES: true
   AgentDeckTests:
     type: bundle.unit-test
@@ -59,11 +59,18 @@ targets:
       - path: Sources/Terminal/TerminalHost.swift
       - path: Sources/Terminal/TerminalPaneView.swift
       - path: Sources/Browser/BrowserHost.swift
+      - path: Sources/Browser/BrowserPopupWindow.swift
+      - path: Sources/Browser/FocusProtectedWebView.swift
+      - path: Sources/Browser/BrowserFocusGuard.swift
       - path: Sources/Browser/BrowserDownload.swift
       - path: Sources/Browser/BrowserPaneView.swift
+      - path: Sources/Browser/BrowserPageFit.swift
       - path: Sources/Browser/BrowserAutomation.swift
       - path: Sources/Browser/BrowserScripts.swift
       - path: Sources/Views/PaneFocusOverlay.swift
+      - path: Sources/Views
+        excludes:
+          - PaneFocusOverlay.swift
     dependencies:
       - package: SwiftTerm
     settings:

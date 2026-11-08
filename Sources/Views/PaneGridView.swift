@@ -1,256 +1,239 @@
 import SwiftUI
 
+/// Stable pane identities across canvas, grid, and maximized layouts keep native PTYs attached during animation.
 struct PaneGridView: View {
     @EnvironmentObject var store: AppStore
-    private let spacing: CGFloat = 8
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var movingPanes: [UUID: CGSize] = [:]
 
     var body: some View {
-        GeometryReader { geo in
-            if let mid = store.maximizedSessionID, let pane = store.pane(containing: mid) {
-                PaneView(
-                    pane: pane, size: PaneSize(width: geo.size.width - 16, height: geo.size.height - 16), mode: .fixed
-                )
-                .padding(8)
-            } else if store.sessions.isEmpty {
-                EmptyCanvasView()
-                    .frame(width: geo.size.width, height: geo.size.height)
-            } else if store.settings.layoutMode == .canvas {
-                CanvasView(viewport: geo.size)
-            } else {
-                ScrollView(.vertical) {
-                    FlowLayout(spacing: spacing) {
-                        ForEach(store.panes) { pane in
-                            PaneView(pane: pane, size: gridSize(in: geo.size), mode: .fixed)
+        GeometryReader { geometry in
+            let frames = store.paneFrames(in: geometry.size)
+            let extent =
+                store.maximizedSessionID == nil
+                ? CGSize(
+                    width: max(geometry.size.width, (frames.values.map(\.maxX).max() ?? 0) + 8),
+                    height: max(geometry.size.height, (frames.values.map(\.maxY).max() ?? 0) + 8)) : geometry.size
+            ScrollViewReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        Color.clear.frame(width: 1, height: 1).id("pane-origin")
+                        CanvasScrollObserver(store: store).frame(width: 1, height: 1).accessibilityHidden(true)
+                        CanvasBackground()
+                            .frame(width: extent.width, height: extent.height)
+                            .contentShape(Rectangle()).onTapGesture { store.focusedSessionID = nil }
+                        CanvasNavigationView(
+                            revision: store.paneRevealRevision,
+                            target: store.maximizedSessionID == nil
+                                ? store.pane(containing: store.focusedSessionID).flatMap { frames[$0.id] } : nil
+                        )
+                        .frame(width: extent.width, height: extent.height)
+                        .accessibilityHidden(true)
+                        if store.sessions.isEmpty {
+                            EmptyCanvasView().frame(width: geometry.size.width, height: geometry.size.height)
+                                .transition(.opacity)
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(8)
+                        if store.maximizedSessionID == nil {
+                            PaneConnectionsView(
+                                connections: store.paneConnections,
+                                frames: connectionFrames(frames),
+                                color: CanvasArrowColor.color(hex: store.settings.arrowColorHex)
+                            )
+                            .frame(width: extent.width, height: extent.height)
+                            .zIndex(1_000_001)
+                        }
+                        ForEach(store.panes) { pane in
+                            let frame = frames[pane.id] ?? CGRect(x: 8, y: 8, width: 440, height: 300)
+                            let visible =
+                                store.maximizedSessionID == nil
+                                || pane.tabs.contains { $0.id == store.maximizedSessionID }
+                            PaneView(
+                                pane: pane, size: PaneSize(width: frame.width, height: frame.height),
+                                mode: paneMode(frame: frame),
+                                onResizeBegin: { store.detachGridForResize(frames: frames) },
+                                onMove: { offset in movingPanes[pane.id] = offset }
+                            )
+                            .offset(
+                                x: store.maximizedSessionID == nil ? 0 : frame.minX,
+                                y: store.maximizedSessionID == nil ? 0 : frame.minY
+                            )
+                            .opacity(visible ? 1 : 0).allowsHitTesting(visible).accessibilityHidden(!visible)
+                            .zIndex(
+                                visible && store.maximizedSessionID != nil
+                                    ? 1_000_000 : Double(pane.activeSession.zIndex)
+                            )
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
+                        }
+                    }.frame(width: extent.width, height: extent.height, alignment: .topLeading)
+                }
+                .scrollDisabled(store.maximizedSessionID != nil)
+                .onChange(of: store.maximizedSessionID) { _, id in
+                    if id != nil { proxy.scrollTo("pane-origin", anchor: .topLeading) }
+                }
+                .onChange(of: store.settings.layoutMode) { _, mode in
+                    // Resizing a scrolled grid must keep the grabbed border under the mouse.
+                    if mode == .grid { proxy.scrollTo("pane-origin", anchor: .topLeading) }
                 }
             }
+            .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: store.panes.map(\.id))
+            .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: store.settings.layoutMode)
+            .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: store.maximizedSessionID)
+            .onAppear {
+                updateViewport(geometry.size)
+                store.paneRevealRevision += 1
+            }
+            .onChange(of: geometry.size) { _, size in updateViewport(size) }
+            .onChange(of: store.panes.count) { _, _ in updateViewport(geometry.size) }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { store.canvasViewport = geometry.size }
-                    .onChange(of: geometry.size) { _, size in store.canvasViewport = size }
-            }
+    }
+
+    private func updateViewport(_ size: CGSize) {
+        store.updateCanvasViewport(size)
+    }
+
+    private func connectionFrames(_ frames: [UUID: CGRect]) -> [UUID: CGRect] {
+        var result = frames
+        for (id, offset) in movingPanes {
+            guard let frame = frames[id] else { continue }
+            result[id] = CGRect(
+                x: max(0, frame.minX + offset.width), y: max(0, frame.minY + offset.height),
+                width: frame.width, height: frame.height)
         }
+        return result
     }
 
-    private func gridSize(in area: CGSize) -> PaneSize {
-        let count = max(1, store.panes.count)
-        let fit = max(1, Int((area.width - 16 + spacing) / (320 + spacing)))
-        let cols = max(1, min(store.settings.gridColumns, count, fit))
-        let rows = Int(ceil(Double(count) / Double(cols)))
-        let w = floor((area.width - 16 - spacing * CGFloat(cols - 1)) / CGFloat(cols))
-        let h = max(220, floor((area.height - 16 - spacing * CGFloat(rows - 1)) / CGFloat(rows)))
-        return PaneSize(width: max(300, w), height: h)
-    }
-}
-
-/// Free canvas: every pane is a mini-window with its own position, size and z-order.
-struct CanvasView: View {
-    @EnvironmentObject var store: AppStore
-    let viewport: CGSize
-
-    var body: some View {
-        let margin = AppStore.canvasSpacing
-        let sessions = store.panes.map(\.activeSession)
-        let extentW = sessions.map { ($0.canvasPosition?.x ?? 0) + store.paneSize(for: $0).width }.max() ?? 0
-        let extentH = sessions.map { ($0.canvasPosition?.y ?? 0) + store.paneSize(for: $0).height }.max() ?? 0
-        ScrollView([.horizontal, .vertical]) {
-            ZStack(alignment: .topLeading) {
-                DotGrid().frame(
-                    width: max(viewport.width, extentW + margin), height: max(viewport.height, extentH + margin)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture { store.focusedSessionID = nil }
-                ForEach(store.panes) { pane in
-                    let s = pane.activeSession
-                    PaneView(
-                        pane: pane, size: store.paneSize(for: s),
-                        mode: .canvas(s.canvasPosition ?? PanePoint(x: margin, y: margin))
-                    )
-                    .zIndex(Double(s.zIndex))
-                }
-            }
-        }
-        .onAppear { store.ensureCanvasPositions(viewportWidth: viewport.width) }
-        .onChange(of: viewport.width) { _, w in store.ensureCanvasPositions(viewportWidth: w) }
-        .onChange(of: store.panes.count) { _, _ in store.ensureCanvasPositions(viewportWidth: viewport.width) }
-    }
-}
-
-private struct DotGrid: View {
-    var body: some View {
-        // Matches the canvas rendering on kontsek.io/agentdeck: 16 pt pitch, visible but quieter than text.
-        Canvas { ctx, size in
-            let step: CGFloat = 16
-            var x: CGFloat = step
-            while x < size.width {
-                var y: CGFloat = step
-                while y < size.height {
-                    ctx.fill(
-                        Path(ellipseIn: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)),
-                        with: .color(.secondary.opacity(0.3)))
-                    y += step
-                }
-                x += step
-            }
-        }
-    }
-}
-
-/// Left-to-right wrapping layout; every child reports a fixed size.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let frames = frames(maxWidth: proposal.width ?? .infinity, subviews: subviews)
-        return CGSize(width: frames.map(\.maxX).max() ?? 0, height: frames.map(\.maxY).max() ?? 0)
+    private func paneMode(frame: CGRect) -> PaneMode {
+        guard store.maximizedSessionID == nil else { return .fixed }
+        let position = PanePoint(x: frame.minX, y: frame.minY)
+        return store.settings.layoutMode == .canvas ? .canvas(position) : .tiled(position)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let frames = frames(maxWidth: bounds.width, subviews: subviews)
-        for (i, f) in frames.enumerated() {
-            subviews[i].place(
-                at: CGPoint(x: bounds.minX + f.minX, y: bounds.minY + f.minY), proposal: ProposedViewSize(f.size))
-        }
-    }
-
-    private func frames(maxWidth: CGFloat, subviews: Subviews) -> [CGRect] {
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowH: CGFloat = 0
-        var out: [CGRect] = []
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x > 0, x + sz.width > maxWidth {
-                x = 0
-                y += rowH + spacing
-                rowH = 0
-            }
-            out.append(CGRect(x: x, y: y, width: sz.width, height: sz.height))
-            x += sz.width + spacing
-            rowH = max(rowH, sz.height)
-        }
-        return out
-    }
 }
 
 enum PaneMode: Equatable {
-    case fixed  // grid / maximized: not movable, not resizable
+    case fixed  // maximized: not movable, not resizable
+    case tiled(PanePoint)  // resizing detaches the grid at its current positions
     case canvas(PanePoint)  // mini-window at a position: movable and resizable
+
+    var position: PanePoint {
+        switch self {
+        case .fixed: return PanePoint(x: 0, y: 0)
+        case .tiled(let point), .canvas(let point): return point
+        }
+    }
 }
 
 struct PaneView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let pane: SessionPane
     let size: PaneSize
     let mode: PaneMode
-    @State private var dragStartSize: PaneSize?
+    var onResizeBegin: () -> Void = {}
+    var onMove: (CGSize?) -> Void = { _ in }
     @State private var moveOffset: CGSize = .zero
 
     private var session: ManagedSession { pane.activeSession }
-    private var focused: Bool { store.focusedSessionID == session.id }
+    private var focused: Bool { pane.tabs.contains { $0.id == store.focusedSessionID } }
+    private var compact: Bool { size.width < 400 || size.height < 260 }
     private var isCanvas: Bool { if case .canvas = mode { return true } else { return false } }
 
     var body: some View {
         let pane = VStack(spacing: 0) {
             PaneHeader(
-                session: session, movable: isCanvas,
-                onMove: { t in moveOffset = t },
+                session: session, movable: isCanvas, compact: compact,
+                onMove: { t in
+                    moveOffset = t
+                    onMove(t)
+                },
                 onMoveEnd: { t in commitMove(t) })
             Divider()
-            if self.pane.showsTabBar {
-                PaneTabBar(pane: self.pane)
+            if self.pane.showsTabBar && (!compact || self.pane.tabs.count > 1) {
+                PaneTabBar(pane: self.pane, maximumVisibleRows: compact ? 1 : (size.height < 400 ? 2 : 3))
+                    .transition(WorkspaceMotion.panel(edge: .top, reduceMotion: reduceMotion))
                 Divider()
             }
             // Always laid out: showing it only when focused changed the terminal's row count on every focus change,
             // which made the CLI repaint its whole screen (visible as a flicker).
-            PaneStatsBar(session: session)
-                .opacity(focused ? 1 : 0.55)
-            Divider()
-            content
-                .id(session.id)
+            if !compact {
+                PaneStatsBar(session: session).opacity(focused ? 1 : 0.55)
+                Divider()
+            }
+            PaneRelationshipBar(session: session)
+            PaneSessionContent(pane: self.pane)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    if !focused {
-                        PaneFocusOverlay {
-                            store.focusedSessionID = session.id
-                            if let terminal = store.terminals.view(for: session.id) {
-                                terminal.window?.makeFirstResponder(terminal)
-                            } else if let webView = store.browsers.controllers[session.id]?.webView {
-                                webView.window?.makeFirstResponder(webView)
-                            }
-                        }
-                        .accessibilityLabel("Focus \(session.name)")
-                    }
-                }
         }
         .frame(width: size.width, height: size.height)
+        .opacity(store.isDemoMode ? 0 : 1)
+        .allowsHitTesting(!store.isDemoMode)
+        .accessibilityHidden(store.isDemoMode)
+        .overlay {
+            if store.isDemoMode {
+                DemoPaneView(
+                    number: (store.panes.firstIndex { $0.id == self.pane.id } ?? 0) + 1,
+                    split: store.visibleSessions(in: self.pane).count > 1,
+                    movable: isCanvas,
+                    onMove: { offset in
+                        moveOffset = offset
+                        onMove(offset)
+                    },
+                    onMoveEnd: commitMove, onMaximize: { store.toggleMaximize(session.id) })
+            }
+        }
+        .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: self.pane.showsTabBar)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8).stroke(
                 focused ? Color.accentColor : Color.gray.opacity(0.35), lineWidth: focused ? 2 : 1)
         )
-        .overlay(alignment: .bottomTrailing) { if isCanvas { grip } }
+        .overlay {
+            if mode != .fixed {
+                MiniWindowResizeOverlay(
+                    frame: CGRect(x: mode.position.x, y: mode.position.y, width: size.width, height: size.height),
+                    minimum: CGSize(width: min(200, size.width), height: min(120, size.height)),
+                    onBegin: {
+                        onResizeBegin()
+                        store.focusSession(session.id)
+                    },
+                    onResize: { frame in
+                        store.setCanvasPosition(for: session.id, PanePoint(x: frame.minX, y: frame.minY))
+                        store.setPaneSize(for: session.id, PaneSize(width: frame.width, height: frame.height))
+                    },
+                    onReset: {
+                        onResizeBegin()
+                        store.setPaneSize(for: session.id, nil)
+                    })
+            }
+        }
         .shadow(
             color: .black.opacity(isCanvas ? (focused ? 0.35 : 0.2) : 0), radius: isCanvas ? 10 : 0, y: isCanvas ? 4 : 0
         )
 
-        if case .canvas(let p) = mode {
-            pane.offset(x: max(0, p.x + moveOffset.width), y: max(0, p.y + moveOffset.height))
-        } else {
-            pane
-        }
+        let origin: CGPoint = {
+            CGPoint(x: max(0, mode.position.x + moveOffset.width), y: max(0, mode.position.y + moveOffset.height))
+        }()
+        pane.offset(x: origin.x, y: origin.y)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(store.isDemoMode ? "Demo mini window" : "\(session.name) mini window")
+            .accessibilityIdentifier("pane-\(self.pane.id)")
     }
 
     private func commitMove(_ t: CGSize) {
         guard case .canvas(let p) = mode else { return }
         moveOffset = .zero
+        onMove(nil)
         store.setCanvasPosition(for: session.id, PanePoint(x: p.x + t.width, y: p.y + t.height))
     }
 
-    @ViewBuilder private var content: some View {
-        switch session.kind {
-        case .cli: TerminalPaneView(session: session)
-        case .browser: BrowserPaneView(session: session)
-        }
-    }
-
-    private var grip: some View {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.caption2).padding(5)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5))
-            .padding(6)
-            .help("Drag to resize · double-click to reset")
-            .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                    .onChanged { v in
-                        if dragStartSize == nil {
-                            dragStartSize = size
-                            store.focusedSessionID = session.id
-                        }
-                        let b = dragStartSize ?? size
-                        store.setPaneSize(
-                            for: session.id,
-                            PaneSize(
-                                width: max(320, b.width + v.translation.width),
-                                height: max(200, b.height + v.translation.height)))
-                    }
-                    .onEnded { _ in dragStartSize = nil }
-            )
-            .onTapGesture(count: 2) { store.setPaneSize(for: session.id, nil) }
-    }
 }
 
 struct PaneHeader: View {
     @EnvironmentObject var store: AppStore
     let session: ManagedSession
     var movable: Bool = false
+    var compact: Bool = false
     var onMove: (CGSize) -> Void = { _ in }
     var onMoveEnd: (CGSize) -> Void = { _ in }
 
@@ -259,40 +242,42 @@ struct PaneHeader: View {
     var body: some View {
         let st = store.status(of: session.id)
         HStack(spacing: 6) {
-            if movable { Image(systemName: "line.3.horizontal").font(.caption2).foregroundStyle(.tertiary) }
-            Circle().fill(st.color).frame(width: 8, height: 8)
-            Image(systemName: session.kind.systemImage).foregroundStyle(.secondary).font(.caption)
-            Text(session.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-            if session.isOrchestrator { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.yellow) }
-            Text(st.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            Spacer(minLength: 4)
-            Text(
-                session.kind == .cli
-                    ? session.effectiveDirectory.abbreviatingHome : (store.runtime[session.id]?.title ?? "")
-            )
-            .font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
-            if session.kind == .cli { fontControls }
+            HStack(spacing: 6) {
+                if movable { Image(systemName: "line.3.horizontal").font(.caption) }
+                Circle().fill(st.color).frame(width: 8, height: 8)
+                Image(systemName: session.kind.systemImage).foregroundStyle(.secondary).font(.caption)
+                Text(session.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                if session.isOrchestrator { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.yellow) }
+                if !compact { Text(st.label).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                Spacer(minLength: 4)
+                if !compact {
+                    Text(
+                        session.kind == .cli
+                            ? session.effectiveDirectory.abbreviatingHome : (store.runtime[session.id]?.title ?? "")
+                    )
+                    .font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 18)
+            .overlay {
+                MiniWindowMoveHandle(
+                    name: session.name, onBegin: { store.focusSession(session.id) },
+                    onMove: onMove, onEnd: onMoveEnd, movable: movable, drawsGrip: false,
+                    onDoubleClick: { store.toggleMaximize(session.id) })
+            }
+            .help("Drag to move · Double-click to expand or restore")
+            if !compact { fontControls }
             Menu {
                 menuItems
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 22)
+            .accessibilityLabel("Window actions for \(session.name)")
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(focused ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
         .contentShape(Rectangle())
-        .onTapGesture { store.focusedSessionID = session.id }
-        .gesture(movable ? moveGesture : nil)
-    }
-
-    private var moveGesture: some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .global)
-            .onChanged { v in
-                if store.focusedSessionID != session.id { store.focusedSessionID = session.id }
-                onMove(v.translation)
-            }
-            .onEnded { v in onMoveEnd(v.translation) }
     }
 
     private var fontControls: some View {
@@ -302,21 +287,24 @@ struct PaneHeader: View {
             } label: {
                 Image(systemName: "minus")
             }
-            Text("\(Int(session.fontSizeOverride ?? store.settings.globalFontSize))")
-                .font(.caption).monospacedDigit().frame(width: 18)
+            .accessibilityLabel("Decrease font size for \(session.name)")
+            Text(store.textSizeLabel(for: session))
+                .font(.caption).monospacedDigit().frame(minWidth: 18)
                 .foregroundStyle(session.fontSizeOverride == nil ? .secondary : .primary)
             Button {
                 store.adjustFont(for: session.id, by: 1)
             } label: {
                 Image(systemName: "plus")
             }
+            .accessibilityLabel("Increase font size for \(session.name)")
             if session.fontSizeOverride != nil {
                 Button {
                     store.resetFont(for: session.id)
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
-                .help("Use global font size")
+                .help("Scale text automatically with window size")
+                .accessibilityLabel("Automatic text size for \(session.name)")
             }
         }
         .buttonStyle(.borderless).font(.caption)
@@ -324,17 +312,44 @@ struct PaneHeader: View {
     }
 
     @ViewBuilder private var menuItems: some View {
+        if let owner = store.browserOwner(for: session) {
+            Toggle(
+                "Split terminal and browser",
+                isOn: Binding(
+                    get: { owner.browserSplitEnabled },
+                    set: { store.setBrowserSplit(for: session, enabled: $0) }))
+        }
+        Section("Text size") {
+            Toggle(
+                session.kind == .browser ? "Fit page width" : "Scale text with window",
+                isOn: Binding(
+                    get: { session.fontSizeOverride == nil },
+                    set: { store.setAutomaticTextSize(for: session.id, enabled: $0) }))
+            Button("Smaller text") { store.adjustFont(for: session.id, by: -1) }
+            Button("Larger text") { store.adjustFont(for: session.id, by: 1) }
+        }
         Section("Pane size") {
             ForEach(PaneSizePreset.allCases) { p in Button(p.label) { store.setPaneSize(for: session.id, p.size) } }
             Button("Reset to default") { store.setPaneSize(for: session.id, nil) }
         }
-        Button(store.maximizedSessionID == session.id ? "Restore panes" : "Maximize") {
-            store.maximizedSessionID = store.maximizedSessionID == session.id ? nil : session.id
+        Button(store.maximizedSessionID == nil ? "Maximize" : "Restore panes") {
+            store.toggleMaximize(session.id)
         }
-        if movable { Button("Bring to front") { store.raisePane(session.id) } }
+        if movable {
+            Button("Bring to front") { store.raisePane(session.id) }
+            Menu("Move window") {
+                Button("Left") { moveBy(x: -40, y: 0) }
+                Button("Right") { moveBy(x: 40, y: 0) }
+                Button("Up") { moveBy(x: 0, y: -40) }
+                Button("Down") { moveBy(x: 0, y: 40) }
+            }
+        }
         Divider()
         if store.cliTabSource(for: session.id).flatMap({ store.profile(for: $0) }) != nil {
             Button("New CLI Tab") { store.addCLITab(to: session.id) }
+        }
+        if session.kind == .browser {
+            Button("New Browser Tab") { store.addBrowserTab(to: session.id) }
         }
         if session.kind == .cli {
             Button("Inject note…") {
@@ -347,6 +362,11 @@ struct PaneHeader: View {
         Button("Stop") { store.stopSession(session.id) }
         Divider()
         Button("Remove session", role: .destructive) { store.removeSession(session.id) }
+    }
+
+    private func moveBy(x: Double, y: Double) {
+        let position = session.canvasPosition ?? PanePoint(x: 0, y: 0)
+        store.setCanvasPosition(for: session.id, PanePoint(x: position.x + x, y: position.y + y))
     }
 }
 
@@ -387,7 +407,7 @@ struct PaneStatsBar: View {
                 }
                 chip(
                     "textformat.size",
-                    "\(Int(session.fontSizeOverride ?? store.settings.globalFontSize)) pt\(session.fontSizeOverride == nil ? "" : " (override)")"
+                    "\(store.textSizeLabel(for: session))\(session.kind == .cli ? " pt" : "")\(session.fontSizeOverride == nil ? " (auto)" : " (fixed)")"
                 )
             }
             .padding(.horizontal, 8).padding(.vertical, 3)

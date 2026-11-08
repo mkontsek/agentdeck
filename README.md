@@ -8,15 +8,21 @@ macOS 14+ · Swift / SwiftUI · MIT · [kontsek.io/agentdeck](https://kontsek.io
 
 One native macOS window runs several AI agents side by side, with a shared task board and an MCP server so they coordinate without peering inside each other.
 
+- **Work** is the primary workspace: tasks, dependencies, shared evidence, handoff packages, and user approvals. **Sessions** keeps the native grid/canvas desk one click away.
+- **CLI usage** is a movable, resizable mini-window with account usage, limits, reset dates, freshness, and session status. Toggle it with **⌥⌘U**.
+- The menu-bar item shows managed CLI status and attention requests. **⌃⌥⌘Space** brings forward work needing attention.
+- Panels, workspace changes, disclosures, and pane open/close/maximize transitions animate; macOS Reduce Motion disables motion. Native terminal views keep stable identities across layouts.
+
 - CLI agents (Claude Code, Codex, Gemini CLI, Antigravity, Grok, plain shells) run in embedded PTY terminals.
 - Web models (ChatGPT, Claude.ai, Gemini, Grok, Perplexity, any URL) run in browser panes with shared sign-ins.
-- AgentDeck manages only sessions it created; subagents a CLI spawns stay inside their parent pane.
+- **Connected subagent windows** run substantial tasks in independent movable/resizable mini-windows while the main conversation returns to prompting. Each owner’s browser tabs stay inside its window. Rounded right-angle routes with filled arrowheads and a configurable color and labeled navigation show parent → worker; see `wiki/Connected-Mini-Windows.md`.
+- Provider-internal subagents remain inside that provider's terminal; managed tabs are created through AgentDeck's `delegate_task` tool.
 
 ```
 ┌ ⊞ +  AgentDeck            grid|canvas  Normal  A ──●── 13        ☾ ((·)) ▭ ▯ ┐
 │ · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · │
 │ · ┌ ● Claude A  working ─ ~/repo ─ 13 ⋯┐ · · ┌ ● ChatGPT  idle ─────────⋯┐ · │
-│ · │ working 42s · up 12m · Opus 4 · ctx │ · · │ (isolated WKWebView)       │ · │
+│ · │ working 42s · up 12m · Opus 4 · ctx │ · · │ (native WKWebView)         │ · │
 │ · │ 31% · 2 open: #3 #5 · 13 pt         │ · · │                            │ · │
 │ · │  (PTY terminal)                      │ · · └────────────────────────────┘ · │
 │ · └──────────────────────────────────────┘ · · · · ┌ ● Codex B  idle ─────⋯┐ · │
@@ -28,7 +34,7 @@ One native macOS window runs several AI agents side by side, with a shared task 
 
 ## 1. Requirements
 
-- macOS 14 or newer: isolated `WKWebsiteDataStore(forIdentifier:)` profiles need 14+.
+- macOS 14 or newer: persistent `WKWebsiteDataStore(forIdentifier:)` profiles need 14+.
 - Xcode 16 or newer with command line tools, including `swift-format` for lint/format.
 - [xcodegen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
 - The only package dependency is [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), resolved by Xcode on first build.
@@ -56,7 +62,9 @@ make clean
 - Gemini CLI replaces Antigravity when that profile is absent; a browser preset replaces a missing CLI profile. All presets stay available in New Session.
 - Saved sessions are restored without duplicates. Missing CLIs show install links; AgentDeck never installs tools or signs in for you.
 - Settings → General controls the defaults and the CLI directory (`~/gitrepos`). Closing the last session leaves an empty canvas until relaunch or **Open default sessions**.
-- New panes are Compact (440×300) with 11 pt text; new windows start at 1400×900. Saved sizes and fonts win.
+- At startup, all mini-windows fit the visible canvas. Terminal text scales with window size; browsers fit page width with vertical scrolling. Existing manual text/zoom overrides remain fixed. New windows start at 1400×900.
+- Terminal/browser splits are on by default; Window actions can switch to single-tab mode. Double-click a window’s top bar to fill the canvas and double-click again to restore its position and size.
+- **Demo mode** in the toolbar replaces private main-window content with synthetic text for screenshots while sessions keep running. Toggle off to return to live content.
 - The first click in an inactive pane focuses it; later clicks reach its terminal or browser.
 
 **New Session (⌘N)** creates one of:
@@ -66,8 +74,9 @@ make clean
 
 Upgrades and persistence:
 
-- Existing browser panes move to the shared profile. Their old individual data stays reachable through **Separate account**; nothing is merged, and Chrome sign-ins are not imported. Removing a shared pane keeps the shared profile.
+- Existing ordinary browser panes and pre-0.1.13 agent companion panes move to the shared profile once. Their old individual data stays reachable through **Separate account**; nothing is merged, and Chrome sign-ins are not imported. Removing a shared pane keeps the shared profile.
 - Sessions persist in `~/Library/Application Support/AgentDeck/state.json` and relaunch at start unless "Start at launch" is off.
+- CLI panes resume their own saved conversation after restart when supported. Browser panes reopen their last visited URL, including chat-page navigation, with the existing sign-in profile.
 - An exited session shows a Restart overlay. Sidebar and pane menus offer Restart / Stop / Remove, optionally deleting the worktree or browser profile.
 - Worktree creation failure cancels the session. Deleting a dirty worktree is refused and the session kept. Unreadable state is preserved and reported, never overwritten.
 
@@ -101,16 +110,18 @@ Tabs:
 
 | Control | Where |
 |---|---|
-| Global font size | toolbar slider, Settings → General (every CLI pane without an override) |
-| Per-pane font | `−` `13` `+` in the pane header, inspector, or ⌘+ / ⌘= / ⌘− / ⌘0 on the focused pane (⌘0 = back to global) |
+| Base text size | toolbar slider, Settings → General (automatic scaling uses a normal 640×440 window as reference and stops at this size) |
+| Per-pane font | `−` / `+`, Window actions → Text size, inspector, or ⌘+ / ⌘= / ⌘−; ⌘0 restores automatic scaling |
 | Layout | toolbar: **Canvas** (default) makes every pane a movable mini-window; **Grid** tiles panes into N columns (stepper) |
 | Move | Canvas: drag a pane by its header; it comes to the front; positions persist |
 | Tidy | ⌥⌘T or toolbar: re-packs panes at their sizes, Claude CLI first, Codex second |
-| Fill Canvas | ⌥⌘F or **Fill Canvas**: balanced rows across the visible canvas; tiny canvases scroll to keep readable minimums |
+| Fill Canvas | ⌥⌘F or **Fill Canvas**: balanced rows fitting every mini-window into the visible canvas |
 | Pane presets | Compact / Normal / Large: toolbar (default for all), pane menu, inspector, View → Pane Size |
-| Drag to resize | Canvas: drag the bottom-right grip; double-click it to reset |
+| Drag to resize | Drag the bottom-right grip, including CLI usage; double-click the bottom-right grip to reset. Resizing a tiled pane switches to Canvas without moving other panes. |
+| Dotted background | Grid and Canvas both show the website's 16-point dot pattern; white in dark appearance, dark in light appearance. |
 | Maximize | ⇧⌘M toggles |
 | Side panels | all collapsed by default: sidebar ⌥⌘S, inspector ⌥⌘I, task board + log ⌥⌘B, or toolbar toggles |
+| Arrow color | Settings → General → Appearance → Canvas arrows; independent of the focus border |
 | Theme | ⌥⌘D flips light/dark; System / Light / Dark in View → Appearance or Settings; terminals and web panes follow |
 
 Focused pane stats:
@@ -152,18 +163,22 @@ Built-in profiles:
 - Agent profiles bypass tool permission prompts by default; Codex also bypasses its sandbox. Edit the commands in Settings → CLI Profiles.
 - A one-time upgrade rewrites unchanged older built-in commands only; custom commands and later edits survive. Running sessions pick up changes on restart.
 
-### Continuing the last conversation
+### Resuming after restart
 
-| Profile | Resume command | Detected from |
+| Profile | Restart command | Identity source |
 |---|---|---|
-| Claude Code | `claude --continue …` | `~/.claude/projects/<encoded directory>/*.jsonl` |
-| Codex | `codex resume --last …` | `~/.codex/sessions/**/rollout-*.jsonl` whose `cwd` matches |
-| Gemini CLI | `gemini --yolo --resume latest` | `~/.gemini/tmp/<directory name>/chats/` |
+| Claude Code | `claude --resume <conversation ID> …` | The managed process's local Claude PID record |
+| Codex | `codex resume <conversation ID> …` | The managed process's open rollout filename |
+| Grok Build | `grok --resume <conversation ID> …` | The managed process's open session filename |
+| Gemini CLI | `gemini --yolo --resume latest` | Best-effort directory history; only with one managed Gemini pane |
 
-- A session whose directory has a prior conversation runs the profile's resume command instead of its command.
-- A directory without one starts fresh. A resumed session is not briefed again and does not get its first prompt again.
-- Disable per session via the inspector's "Continue last conversation on start" or at creation; clear a profile's resume command to disable it for that profile.
-- Focused session and pane tabs are restored at launch regardless.
+- **Resume this session after restart** defaults on, including for tabs that start fresh. Exact IDs keep agents sharing a directory in separate conversations.
+- **Use latest conversation on first start** controls the initial launch separately. New CLI tabs keep it off; unknown directory-wide history is never shared automatically between managed panes.
+- Identity checkpoints live in `~/Library/Application Support/AgentDeck/resume/<session ID>.json`. AgentDeck refreshes them while the provider runs and before a normal quit. They contain only the provider, directory, launch time, conversation ID and file path; conversation bodies are not copied or published.
+- Missing or ambiguous exact history starts a fresh session with a log notice. Restart never repeats the original task prompt. Resumed conversations receive no typed briefing.
+- Clear a profile's resume command to disable resume for that profile. Plain shells and providers without a verified resume connector start normally; in-flight terminal processes cannot survive quitting the app.
+- Custom command text stays unchanged. A custom resume command can use `{conversationId}` when Claude/Codex/Grok metadata tracking supplies one. Standard exact-ID commands are used only with unchanged built-in profiles.
+- Focused session, pane tabs, geometry and browser sign-in profiles restore independently of conversation resumption.
 
 ### Tools
 
@@ -175,34 +190,71 @@ Built-in profiles:
 | `list_skills` / `read_skill` | list enabled local skills and read their instructions by exact skill ID |
 | `create_task` | add a task (`title`, `description`, `owner`, `status`, `notes`) |
 | `update_task` | claim (`owner: "me"`), change `status`, append `notes`, edit title/description |
-| `handoff` | assign a task to another session and type a handoff message into its input (queued until idle) |
-| `send_message` | type a free-form single-line note into another CLI session |
+| `handoff` | prepare a persistent context package; user approval may precede delivery; ownership changes only when accepted |
+| `read_handoffs` | participants and orchestrators read explicitly shared packages and delivery history |
+| `accept_handoff` | the named recipient accepts responsibility or declines; repeated acceptance is safe |
+| `send_message` | durably enqueue a peer message; supply a unique `message_id` and reuse it on retries |
+| `read_inbox` / `acknowledge_inbox` | read and acknowledge your own stable event IDs; no terminal input |
 | `log` | append to the orchestration log |
 | `recruit_session` / `recruit_status` | **Orchestrator only**: ask the user to approve a new session (approve/deny in the sidebar) |
-| `browser_navigate` / `browser_read` / `browser_click` / `browser_type` / `browser_screenshot` / `browser_eval` | **CLI sessions only**: drive the caller's private browser |
+| `browser_navigate` / `browser_read` / `browser_click` / `browser_type` / `browser_screenshot` / `browser_eval` | **CLI sessions only**: drive the caller's own browser tab |
 
 Sessions are addressed by name, id, id prefix or `"me"`.
 
-### Private browsers for agents
+### Work, handoffs and approvals
 
-- Agents never use your own browser. The first `browser_*` call opens a WebKit tab beside the terminal (`<session> browser`, globe icon) with its own isolated website data store.
-- Sessions cannot see each other's cookies or sign-ins; the companion profile cannot be switched to the shared one.
-- The tab opens without stealing focus; click it to watch or help, for example to sign in once. Removing the CLI session removes the browser and deletes its profile.
+- Settings → Orchestration controls automatic subagents (on by default), concurrent workers per conversation (default 20; range 1–20), and independent worker windows. Each worker starts a fresh CLI conversation using the parent's profile and directory/worktree, without taking focus.
+- The parent receives instructions to delegate substantial work and end its turn promptly; quick replies stay in the main conversation. This depends on the CLI agent following its briefing. Workers receive the task objective, published notes and explicit instructions; they report evidence through `report_subagent_result`.
+- Delegation accepts only the parent's own or unassigned tasks with completed dependencies and no open handoff. Workers cannot spawn more workers. Results remain subject to completion approval; an early process exit blocks the task and frees its worker slot. Up to 40 workers are retained per parent; close old worker windows to make room.
+- New Task can immediately run a ready To do/In progress task in a subagent. Closing a parent promotes surviving workers to normal tabs. All workers share the inherited directory, so task scopes should avoid overlapping edits.
+
+- Task states are `todo`, `in-progress`, `review`, `awaiting-approval`, `blocked`, and `done`. New tasks require user approval for completion; an agent's `done` request becomes `awaiting-approval`. Existing saved tasks retain their previous completion behavior. Users can change the requirement in Edit Task.
+- Tasks can depend on other tasks. Cycles and unknown dependencies are rejected; unfinished dependencies prevent agent work from starting or completing. A dependency cannot be deleted while another task references it.
+- Agents may update their own tasks or claim unassigned work. Orchestrators can manage tasks, but neither role can approve completion through MCP. Use `handoff` to transfer ownership; direct assignment to another agent is rejected.
+- A handoff snapshots the task objective and published notes plus a summary, constraints, explicit artifact paths/URLs, verification, and next action. AgentDeck never assembles it from terminal transcripts, cookies, or browser pages, and never opens artifact files automatically.
+- Settings → Orchestration → **Approve agent handoffs before delivery** defaults on. The user reviews the package on the board. User-composed handoffs are approved when sent.
+- Delivery uses a separate durable inbox: approval → queued → inbox acceptance → recipient acceptance/decline. Worker messages, results, context and handoff notices never type into terminal input. Pending events attach automatically to the recipient’s next AgentDeck MCP result; `read_inbox` / `acknowledge_inbox` expose stable IDs and explicit receipt. Idle CLIs are not force-woken, and receipt does not prove processing or task completion. Stopped sessions keep their inbox; replacement tabs cannot inherit it.
+- The recipient calls `read_handoffs(handoff_id=...)`, then `accept_handoff(handoff_id=..., accept=true)` to take ownership. A changed task revision rejects stale context; cancel and prepare a fresh handoff. Retries resend the notification, not the work.
+- The board shows each task's history, packages, approval controls, and links to its sessions. **⌥⌘1** opens Work; **⌥⌘2** opens Sessions.
+
+### CLI usage, limits and resets
+
+The mini-window groups every CLI profile currently used by managed sessions. Account quotas are displayed once per provider, never summed across panes. Session context percentages remain separate from subscription usage.
+
+| Provider | Source and limits |
+| --- | --- |
+| Codex | A short-lived `codex app-server` client calls `account/rateLimits/read`. Shows reported quota buckets, reset dates and available earned resets; never consumes a reset or starts a model turn. |
+| Claude Code | Reads the existing default OAuth credential from Keychain or the CLI credential file, then calls the provider's usage endpoint. No interactive Keychain prompts, credential writes or login refreshes. |
+| Gemini CLI | Reads the existing default OAuth credential and queries Code Assist health/quota endpoints. An expired login is reported; the user refreshes it through the CLI. No onboarding or project creation. |
+| Grok, Antigravity, custom CLIs | Show session status and an explicit unavailable state for account fields without a supported connector. Grok's `/usage` UI exposes account information; its `usage` subcommand reports session tokens instead. |
+
+- Uses each CLI's **default local sign-in**; custom environment/account configurations may differ. Subscription connectors do not imply support for API-key billing quotas.
+- Refreshes every 60 seconds while visible, with manual refresh. Reopening reuses fresh samples; cancelled reads can retry immediately. Claude credentials remain only in memory for up to five minutes and are invalidated on authentication failure. If Keychain requires interaction, usage shows unavailable instead of opening an access dialog. Errors retain the last known sample, marked stale; missing data is never displayed as zero usage.
+- Credentials and responses stay in memory and are not exposed through MCP or written to workspace state. Browser cookies are not used. Reset timestamps use the Mac's local timezone; an elapsed reset waits for provider confirmation.
+- Codex contract: [official app-server documentation](https://learn.chatgpt.com/docs/app-server.md). Claude/Gemini adapters follow the installed CLI's current usage contracts and may require updates if providers change them.
+
+### Agent browsers and shared sign-ins
+
+- The first `browser_*` call opens an agent-owned browser tab inside its terminal’s mini-window (`<session> browser`, globe icon). It uses the shared persistent AgentDeck sign-in profile by default; your external browser remains separate.
+- Sign in to Google or another service once in a shared pane; ordinary and agent panes reuse that local session. Agents still control only their own tabs, but can use the same signed-in accounts. Choose **Separate account** from the browser toolbar or inspector for independent cookies.
+- The tab opens without stealing focus. Removing a CLI removes only its owned browser tabs and preserves shared sign-ins. Old companion profiles remain available through Separate account after the one-time shared-profile migration.
 - The orchestration log records browser calls without typed text, scripts or URL query strings.
 - `browser_navigate` loads a URL and waits; `browser_read` returns visible text, links or HTML; `browser_click` targets a CSS selector or visible text; `browser_type` fills a field and can press Enter; `browser_eval` runs JavaScript; `browser_screenshot` returns a PNG.
-- A hidden tab keeps working: it is parked off-screen inside the main window and occlusion detection is off, so it renders while other windows cover AgentDeck. Screenshots still need the AgentDeck window to exist.
-- This separates agents' web sessions from each other and from you. It is not a sandbox: see [SECURITY.md](SECURITY.md).
+- A hidden tab keeps working in its own off-screen rendering panel, which cannot become the key or main window. It stays outside the user's main-window responder chain; occlusion detection is off so automation and screenshots remain available while the tab is hidden.
+- WebKit stores cookies and website data locally under your macOS account. AgentDeck does not store account passwords or bypass site expiry/revocation. Sharing is deliberate, and is not a sandbox: see [SECURITY.md](SECURITY.md).
 
 ### How agents learn about each other
 
 - **Briefing.** Before launch AgentDeck writes `~/Library/Application Support/AgentDeck/briefing/<id>.md`: identity, directory, tools, the board and the skill catalog. Claude Code loads it with `--append-system-prompt-file "{briefingPath}"`, so nothing appears in the terminal.
-- Profiles without `{briefingPath}` in their command are typed one line the first time they go idle: `[AgentDeck] Read your briefing at <path> before working.`, followed by the first prompt if set. `AGENTDECK_BRIEFING` also points at the file.
-- **Status summaries** are never broadcast automatically; each costs the agent a turn. "Inject Context Now" (Session menu, pane menu, inspector) sends the focused session one line like `[AgentDeck status] Sessions: Claude A (idle, you), Codex B (working). Open tasks: 2 — #3 "Fix login" (in-progress, Codex B)…`. The per-session "Include status summary in start-up briefing" toggle affects only the briefing.
-- **Handoffs** arrive as `[AgentDeck handoff from X] Task #N: … update_task(task_id=N, status=in-progress, owner=me)`.
+- Codex receives the full briefing through `-c developer_instructions=...`; Grok uses additive `--rules`. These launch settings also apply on resume and conversation reset, without replacing the provider's built-in system prompt.
+- Gemini and Antigravity load a persistent bootstrap section appended to `~/.gemini/GEMINI.md`. It requires reading the current process's `AGENTDECK_BRIEFING` before answering after a fresh start, resume or clear. Existing user instructions are preserved; outside AgentDeck the section does nothing. This route requires the agent to follow the bootstrap instruction and the provider to load its default global context file.
+- Custom profiles without a briefing placeholder receive a pointer through startup argv or the durable inbox. Add a supported persistent instruction mechanism to both launch and resume templates to retain context after clearing. Existing running processes need a restart after upgrading; unchanged shipped profiles migrate automatically.
+- **Status summaries** are never broadcast automatically; each costs the agent a turn. "Inject Context Now" (Session menu, pane menu, inspector) queues a status event for the focused session like `[AgentDeck status] Sessions: Claude A (idle, you), Codex B (working). Open tasks: 2 — #3 "Fix login" (in-progress, Codex B)…`. The per-session "Include status summary in start-up briefing" toggle affects only the briefing.
+- **Handoffs** arrive as a short notification containing a task and handoff ID. The recipient reads its published package and explicitly accepts through MCP.
 - **Inject Note (⇧⌘I)** types anything into the focused session as if you had typed it.
-- Injected text is typed into the PTY, then Enter after the profile's *submit delay*. Newlines collapse to one line; control characters are dropped.
-- A busy target queues the message until its next idle tick. Stopped sessions reject messages.
-- Profiles with *Speaks MCP* off reject automated messages; their handoffs are board assignments only. User-entered notes and first prompts still work.
+- Only explicit **Inject Note** text uses negotiated terminal paste, then Enter after the profile's *submit delay*. Newlines collapse to one line; control characters are dropped. Background coordination never uses this path.
+- Worker events queue independently of idle/busy status and survive process stop/restart. The next AgentDeck MCP tool result carries them automatically; an idle TUI is not force-woken. Explicit Inject Note still requires a running session.
+- Profiles with *Speaks MCP* off reject automated messages and acknowledged handoffs. Explicit user-entered notes still work; automatic first prompts require a supported provider launcher or a custom `{initialPrompt}` argument.
 
 ### A typical agent workflow
 
@@ -210,8 +262,11 @@ Sessions are addressed by name, id, id prefix or `"me"`.
 read_board                     → see open work
 update_task(task_id=4, owner="me", status="in-progress")
 … do the work …
-update_task(task_id=4, status="done", notes="PR #12 opened")
-handoff(target_session="Codex B", title="Review PR #12", note="focus on the auth middleware")
+update_task(task_id=4, status="review", notes="PR #12 opened; auth tests pass")
+handoff(target_session="Codex B", task_id=4, note="Ready for review", next_action="Review the auth middleware")
+… user approves; recipient reads and accepts the handoff …
+update_task(task_id=4, status="done", notes="Review passed")
+… user approves completion on the board …
 ```
 
 An Orchestrator can also call `recruit_session(name="Tests", cli_profile="codex", use_worktree=true, initial_prompt="Run the test suite and report failures to the board")`; the request waits in the sidebar for approval.
@@ -219,10 +274,10 @@ An Orchestrator can also call `recruit_session(name="Tests", cli_profile="codex"
 ## 6. Adding a CLI type
 
 - Settings → **CLI Profiles** → `+`. A profile is a zsh snippet run as `zsh -l -i -c "<command>"` in the session directory.
-- Placeholders: `{mcpUrl}` `{mcpConfigPath}` `{briefingPath}` `{sessionId}` `{sessionName}` `{cwd}`. A *resume command* takes the same placeholders.
-- Include `{briefingPath}` when the CLI accepts a system-prompt file; the briefing is then never typed.
+- Placeholders: `{mcpUrl}` `{mcpConfigPath}` `{briefingPath}` `{briefing}` `{briefingConfig}` `{sessionId}` `{sessionName}` `{cwd}`. A *resume command* also accepts `{conversationId}` for a captured provider conversation.
+- Use `{briefingPath}` for an instruction file, `{briefing}` for literal briefing text, or `{briefingConfig}` for Codex's TOML-encoded `developer_instructions` assignment. Add the placeholder to both launch and resume commands; the briefing is then never typed.
 - Placeholders are inserted as literal data in unquoted, single-quoted and double-quoted arguments. Use environment variables for here-documents and nested substitutions.
-- Set *Submit delay* when the CLI needs a pause before Enter (Ink TUIs want ~150 ms). Turn off *Speaks MCP* where typed text would be executed.
+- *Submit delay* applies only to explicit Inject Note actions. Fresh initial tasks use provider launch arguments, with `{initialPrompt}` available to custom commands. Turn off *Speaks MCP* for plain shells; background coordination requires MCP.
 - Profiles live in `state.json`; built-ins are re-added if missing.
 
 ```
@@ -232,7 +287,8 @@ my-agent --mcp-http agentdeck={mcpUrl} --name "{sessionName}"
 ## 7. Shared skill directories
 
 - Settings → **Skills** loads folders or repositories containing `.agents/skills`, `.claude/skills`, `.codex/skills`, `.gemini/skills` or `skills`. Defaults: `~/gitrepos` and `~/.codex/skills`.
-- Add or remove folders, enable individual skills, preview instructions, open source files, reload after edits.
+- Paste a skills folder path or choose a folder. Search by name, description or path; use individual checkboxes or Enable shown/Disable shown. Toggle changes update the catalog and MCP access immediately without rescanning. Reload after file edits.
+- Disabling a skill prevents future AgentDeck reads; it cannot erase instructions already loaded into a running agent's conversation.
 - AgentDeck writes `~/Library/Application Support/AgentDeck/skills/catalog.md`, exports `AGENTDECK_SKILLS_FILE` and JSON `AGENTDECK_SKILL_DIRECTORIES`, and points agents to relevant skills in their briefing. MCP clients call `list_skills` and `read_skill`.
 - Provider configuration and repositories are never modified; no provider-native slash commands are registered.
 - Running agent: **Use in focused CLI**. Browser chat: **Copy for browser** and paste; a browser chat cannot read local skill scripts through the catalog.
@@ -251,7 +307,7 @@ my-agent --mcp-http agentdeck={mcpUrl} --name "{sessionName}"
 | `Sources/Models` | sessions, tasks, settings, CLI profiles |
 | `Sources/Store/AppStore.swift` | single source of truth: lifecycle, persistence, status loop, injection, handoffs, recruits |
 | `Sources/Terminal` | SwiftTerm PTY host and SwiftUI wrapper |
-| `Sources/Browser` | isolated WKWebView host and pane, agent browser tools and page scripts |
+| `Sources/Browser` | persistent shared/separate WKWebView profiles, agent browser tools and page scripts |
 | `Sources/MCP` | loopback HTTP server, JSON-RPC routing, tool definitions |
 | `Sources/Services` | status heuristics, git worktree helpers |
 | `Sources/Views` | sidebar, pane grid, board, log, inspector, sheets, settings |
@@ -270,7 +326,7 @@ Downloads: browser panes save into the configured folder, keep the file name, ap
 - HTTP/1.1 with Content-Length only: no chunked requests, no pipelining; every response closes its connection. Limits: 16 KiB headers, 1 MiB bodies, 15-second connection deadline.
 - A recruit request shows as an orange "approval" badge in the toolbar while the sidebar is hidden.
 - Some providers restrict embedded sign-in. Shared profiles reuse AgentDeck sign-ins but bypass no provider restriction and import no Chrome session.
-- Browser sessions receive handoffs on the board only; nothing is typed into web UIs.
+- Handoffs require an MCP-enabled CLI recipient; browser sessions and plain shells cannot acknowledge them.
 - A nested launch strips `CLAUDE*`/`CODEX_*` variables so Claude Code starts inside another Claude Code session.
 
 ## 11. Security and license

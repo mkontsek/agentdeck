@@ -20,7 +20,7 @@ private final class ResumeOnce<Value> {
 @MainActor
 final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     let id: UUID
-    let webView: WKWebView
+    let webView: FocusProtectedWebView
     @Published var urlText: String
     @Published var title: String = ""
     @Published var isLoading: Bool = false
@@ -34,30 +34,80 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
     private var downloads: [ObjectIdentifier: WKDownload] = [:]
     private var downloadPaths: [ObjectIdentifier: String] = [:]
     private var reservedPaths: Set<String> = []
+    private var urlObservation: NSKeyValueObservation?
+    private var automationPanel: BrowserAutomationPanel?
+    private(set) var isClosed = false
+    private(set) var popupWindows: [UUID: BrowserPopupWindow] = [:]
+    var onClose: (@MainActor () -> Void)?
+    private let isPopup: Bool
+    private let popupBudget: BrowserPopupBudget
 
-    init(
+    convenience init(
         id: UUID, profileID: UUID, url: String, keepsRenderingWhenOccluded: Bool = false,
         downloadDirectory: @escaping @MainActor () -> URL = { DownloadLocation.directory(from: "") },
         onDownload: (@MainActor (DownloadEvent) -> Void)? = nil
     ) {
-        self.id = id
-        self.urlText = url
-        self.downloadDirectory = downloadDirectory
-        self.onDownload = onDownload
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: profileID)
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
+        self.init(
+            id: id, configuration: config, url: url, popupBudget: BrowserPopupBudget(),
+            downloadDirectory: downloadDirectory, onDownload: onDownload)
         // A Safari UA keeps Google/OpenAI sign-in flows from rejecting the embedded view.
         webView.customUserAgent =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+        if keepsRenderingWhenOccluded { Self.disableOcclusionDetection(webView) }
+        load(url)
+    }
+
+    /// A popup must use WebKit's configuration unchanged; WebKit performs its initial navigation.
+    private init(
+        id: UUID, configuration: WKWebViewConfiguration, url: String?, popupBudget: BrowserPopupBudget,
+        downloadDirectory: @escaping @MainActor () -> URL,
+        onDownload: (@MainActor (DownloadEvent) -> Void)?
+    ) {
+        self.id = id
+        self.urlText = url ?? "about:blank"
+        self.downloadDirectory = downloadDirectory
+        self.onDownload = onDownload
+        self.isPopup = url == nil
+        self.popupBudget = popupBudget
+        webView = FocusProtectedWebView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        if keepsRenderingWhenOccluded { Self.disableOcclusionDetection(webView) }
-        load(url)
+        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.sync() }
+        }
+    }
+
+    func dispose() {
+        guard !isClosed else { return }
+        isClosed = true
+        let children = popupWindows.values
+        popupWindows.removeAll()
+        for child in children { child.close() }
+        closeAutomationPanel()
+        cancelWaiters()
+        onDownload = nil
+        for download in downloads.values {
+            download.delegate = nil
+            download.cancel { _ in }
+        }
+        downloads.removeAll()
+        downloadPaths.removeAll()
+        reservedPaths.removeAll()
+        onStateChange = nil
+        urlObservation = nil
+        webView.stopLoading()
+        webView.pageFit.cancel()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.removeFromSuperview()
+        onClose = nil
     }
 
     /// Agent browsers keep working while the user's own windows cover AgentDeck. WebKit otherwise pauses rendering
@@ -70,23 +120,43 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         setter(webView, selector, false)
     }
 
-    /// WebKit only lays out, renders and snapshots views that sit in a visible window. A companion browser whose
-    /// tab is hidden has no superview, so park it off-screen inside the main window while it works; showing its
-    /// tab re-attaches it to the pane.
+    /// Hidden pages render in a non-key panel. Putting them in the main window lets WebKit clear that
+    /// window's first responder even when its own becomeFirstResponder() rejects focus.
     func ensureInWindow() {
-        guard webView.window == nil else { return }
-        let window = NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && $0.contentView != nil }
-        guard let content = window?.contentView else { return }
+        guard !isClosed, webView.window == nil else { return }
+        webView.allowsKeyboardFocus = false
+        let panel: BrowserAutomationPanel
+        if let existing = automationPanel {
+            panel = existing
+        } else {
+            panel = BrowserAutomationPanel(
+                contentRect: NSRect(x: -16384, y: -16384, width: 1024, height: 768),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.isReleasedWhenClosed = false
+            panel.hidesOnDeactivate = false
+            panel.ignoresMouseEvents = true
+            panel.isExcludedFromWindowsMenu = true
+            automationPanel = panel
+        }
+        guard let content = panel.contentView else { return }
         webView.removeFromSuperview()
-        webView.autoresizingMask = []
-        webView.frame = NSRect(x: -4096, y: -4096, width: 1024, height: 768)
+        webView.autoresizingMask = [.width, .height]
+        webView.frame = content.bounds
         content.addSubview(webView)
+        panel.orderFrontRegardless()
+    }
+
+    func closeAutomationPanel() {
+        automationPanel?.orderOut(nil)
+        automationPanel?.close()
+        automationPanel = nil
     }
 
     // MARK: Automation
 
     /// Load `text` and wait for the navigation to finish. Returns an error message, or nil on success.
     func navigate(_ text: String, timeoutSeconds: Double = 20) async -> String? {
+        guard !isClosed else { return "browser closed" }
         guard let url = Self.url(from: text) else { return "invalid url \(text)" }
         guard let navigation = webView.load(URLRequest(url: url)) else { return "navigation could not start" }
         let key = ObjectIdentifier(navigation)
@@ -169,7 +239,7 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
     }
 
     func load(_ text: String) {
-        guard let u = Self.url(from: text) else { return }
+        guard !isClosed, let u = Self.url(from: text) else { return }
         webView.load(URLRequest(url: u))
     }
 
@@ -190,10 +260,14 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         onStateChange?(id)
     }
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { sync() }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        self.webView.pageFit.cancel()
+        sync()
+    }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { sync() }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         sync()
+        self.webView.pageFit.requestFit()
         finish(navigation, error: nil)
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -210,7 +284,9 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         preferences: WKWebpagePreferences,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
-        if navigationAction.shouldPerformDownload {
+        if isClosed || (isPopup && !Self.allowsPopupURL(navigationAction.request.url)) {
+            decisionHandler(.cancel, preferences)
+        } else if navigationAction.shouldPerformDownload {
             decisionHandler(.download, preferences)
         } else {
             decisionHandler(.allow, preferences)
@@ -244,6 +320,10 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
     }
 
     private func accept(_ download: WKDownload) {
+        guard !isClosed else {
+            download.cancel { _ in }
+            return
+        }
         download.delegate = self
         downloads[ObjectIdentifier(download)] = download
         let pending = navigationWaiters
@@ -251,13 +331,43 @@ final class BrowserController: NSObject, ObservableObject, WKNavigationDelegate,
         for waiter in pending.values { waiter.resume(returning: nil) }
     }
 
-    // Open popups (OAuth windows etc.) in the same view.
+    // Keep the opener alive. Re-loading this request in the parent loses POST bodies and the window relationship.
     func webView(
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if let u = navigationAction.request.url { webView.load(URLRequest(url: u)) }
-        return nil
+        guard webView === self.webView, !isClosed, navigationAction.targetFrame == nil,
+            Self.allowsPopupURL(navigationAction.request.url), popupBudget.count < BrowserPopupBudget.limit
+        else { return nil }
+        let child = BrowserController(
+            id: UUID(), configuration: configuration, url: nil, popupBudget: popupBudget,
+            downloadDirectory: downloadDirectory, onDownload: onDownload)
+        child.webView.customUserAgent = webView.customUserAgent
+        let popup = BrowserPopupWindow(controller: child, features: windowFeatures)
+        let childID = child.id
+        popupBudget.count += 1
+        popupWindows[childID] = popup
+        popup.onClose = { [weak self, budget = popupBudget] in
+            budget.count -= 1
+            self?.popupWindows.removeValue(forKey: childID)
+        }
+        popup.show()
+        return child.webView
+    }
+
+    static func allowsPopupURL(_ url: URL?) -> Bool {
+        guard let url else { return true }  // window.open() starts with an empty document.
+        if url.absoluteString.isEmpty { return true }
+        switch url.scheme?.lowercased() {
+        case "http", "https": return url.host?.isEmpty == false
+        case "about": return url.absoluteString == "about:blank"
+        default: return false
+        }
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        onClose?()
     }
 
     // macOS WebKit shows no file chooser unless the UI delegate provides one: without this, an upload button or
@@ -296,6 +406,10 @@ extension BrowserController: WKDownloadDelegate {
         _ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
         completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
     ) {
+        guard !isClosed else {
+            completionHandler(nil)
+            return
+        }
         let directory = downloadDirectory()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -367,13 +481,7 @@ final class BrowserHost {
     }
 
     func dispose(id: UUID) {
-        controllers[id]?.cancelWaiters()
-        controllers[id]?.onStateChange = nil
-        controllers[id]?.webView.stopLoading()
-        controllers[id]?.webView.navigationDelegate = nil
-        controllers[id]?.webView.uiDelegate = nil
-        controllers[id]?.webView.removeFromSuperview()
-        controllers[id] = nil
+        controllers.removeValue(forKey: id)?.dispose()
     }
 
     func isRunning(_ id: UUID) -> Bool { controllers[id] != nil }

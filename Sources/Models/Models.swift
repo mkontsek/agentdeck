@@ -38,8 +38,6 @@ enum SessionStatus: String, Codable, CaseIterable {
         }
     }
 
-    /// True when the agent is not in the middle of a turn and can safely receive injected text.
-    var acceptsInjection: Bool { self == .idle }
 }
 
 enum DesktopNotificationState: Equatable {
@@ -121,10 +119,15 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     var browserProfileMode: BrowserProfileMode = .shared
     /// Set on the private browser AgentDeck opens beside a CLI session for its browser_* tools.
     var agentOwnerID: UUID? = nil
+    /// Managed task worker, independent from the parent's conversation and provider history.
+    var parentSessionID: UUID? = nil
+    var delegatedTaskID: Int? = nil
+    var subagentCompleted = false
 
     // UI / behaviour
     var paneID: UUID = UUID()
     var fontSizeOverride: Double? = nil
+    var browserSplitEnabled = true
     var paneSize: PaneSize? = nil
     var canvasPosition: PanePoint? = nil
     var zIndex: Int = 0
@@ -133,6 +136,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     var autoStart: Bool = true
     /// Launch the profile's resume command when the provider has a conversation for this directory.
     var resumeLastConversation: Bool = true
+    /// Restore this pane's own provider conversation after its first launch, including newly created tabs.
+    var resumeOnRestart: Bool = true
 
     var effectiveDirectory: String { worktreePath ?? workingDirectory }
 
@@ -145,9 +150,10 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, kind, createdAt, cliProfileID, workingDirectory, worktreePath, worktreeBranch, worktreeRepo,
             initialPrompt, url, browserProfileID, browserProfileMode, agentOwnerID, paneID, fontSizeOverride, paneSize,
-            canvasPosition,
+            canvasPosition, browserSplitEnabled,
             zIndex, isOrchestrator,
-            autoInjectContext, autoStart, resumeLastConversation
+            autoInjectContext, autoStart, resumeLastConversation, resumeOnRestart,
+            parentSessionID, delegatedTaskID, subagentCompleted
     }
 
     init(from decoder: Decoder) throws {
@@ -166,8 +172,12 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         browserProfileID = c.value(.browserProfileID, default: UUID())
         browserProfileMode = c.value(.browserProfileMode, default: .shared)
         agentOwnerID = c.value(.agentOwnerID, default: nil)
+        parentSessionID = c.value(.parentSessionID, default: nil)
+        delegatedTaskID = c.value(.delegatedTaskID, default: nil)
+        subagentCompleted = c.value(.subagentCompleted, default: false)
         paneID = c.value(.paneID, default: id)
         fontSizeOverride = c.value(.fontSizeOverride, default: nil)
+        browserSplitEnabled = c.value(.browserSplitEnabled, default: true)
         paneSize = c.value(.paneSize, default: nil)
         canvasPosition = c.value(.canvasPosition, default: nil)
         zIndex = c.value(.zIndex, default: 0)
@@ -175,6 +185,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         autoInjectContext = c.value(.autoInjectContext, default: true)
         autoStart = c.value(.autoStart, default: true)
         resumeLastConversation = c.value(.resumeLastConversation, default: true)
+        resumeOnRestart = c.value(.resumeOnRestart, default: true)
     }
 }
 
@@ -196,76 +207,10 @@ struct SessionRuntime: Equatable {
     var initialPromptSent: Bool = false
     /// True when the current launch continued an earlier conversation; the first message is then skipped.
     var resumed: Bool = false
+    var restoredLaunch: Bool = false
     var isRunning: Bool = false
     var generation: Int = 0
     var injectionReadyAt: Date? = nil
-}
-
-// MARK: - Task board
-
-enum TaskStatus: String, Codable, CaseIterable, Identifiable {
-    case todo
-    case inProgress = "in-progress"
-    case done, blocked
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .todo: return "To do"
-        case .inProgress: return "In progress"
-        case .done: return "Done"
-        case .blocked: return "Blocked"
-        }
-    }
-    var systemImage: String {
-        switch self {
-        case .todo: return "circle"
-        case .inProgress: return "circle.lefthalf.filled"
-        case .done: return "checkmark.circle.fill"
-        case .blocked: return "hand.raised.fill"
-        }
-    }
-}
-
-struct BoardTask: Codable, Identifiable, Hashable {
-    var id: Int
-    var title: String
-    var description: String = ""
-    var ownerSessionID: UUID? = nil
-    var status: TaskStatus = .todo
-    var notes: String = ""
-    var createdBy: String = "user"
-    var createdAt: Date = Date()
-    var updatedAt: Date = Date()
-
-    init(
-        id: Int, title: String, description: String = "", ownerSessionID: UUID? = nil, status: TaskStatus = .todo,
-        notes: String = "", createdBy: String = "user"
-    ) {
-        self.id = id
-        self.title = title
-        self.description = description
-        self.ownerSessionID = ownerSessionID
-        self.status = status
-        self.notes = notes
-        self.createdBy = createdBy
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, description, ownerSessionID, status, notes, createdBy, createdAt, updatedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(Int.self, forKey: .id)
-        title = c.value(.title, default: "Untitled")
-        description = c.value(.description, default: "")
-        ownerSessionID = c.value(.ownerSessionID, default: nil)
-        status = c.value(.status, default: .todo)
-        notes = c.value(.notes, default: "")
-        createdBy = c.value(.createdBy, default: "user")
-        createdAt = c.value(.createdAt, default: Date())
-        updatedAt = c.value(.updatedAt, default: Date())
-    }
 }
 
 // MARK: - Orchestration log
@@ -312,7 +257,19 @@ struct CLIProfile: Codable, Identifiable, Hashable {
     var notes: String = ""
 
     /// The briefing travels inside the launch command (e.g. as an appended system prompt) instead of being typed.
-    var deliversBriefingInCommand: Bool { command.contains("{briefingPath}") }
+    var deliversBriefingInCommand: Bool { Self.includesBriefing(command) }
+
+    static func includesBriefing(_ template: String) -> Bool {
+        ["{briefingPath}", "{briefing}", "{briefingConfig}"].contains { template.contains($0) }
+    }
+
+    /// These providers load the persistent GEMINI.md bridge on every new conversation.
+    var usesBriefingRuleBridge: Bool {
+        guard ["gemini", "antigravity"].contains(id),
+            let builtin = Self.builtins.first(where: { $0.id == id })
+        else { return false }
+        return command == builtin.command && (resumeCommand == nil || resumeCommand == builtin.resumeCommand)
+    }
     var canResume: Bool { !(resumeCommand ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     static let builtins: [CLIProfile] = [
@@ -327,11 +284,12 @@ struct CLIProfile: Codable, Identifiable, Hashable {
         ),
         CLIProfile(
             id: "codex", name: "Codex",
-            command: "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+            command:
+                "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c {briefingConfig}",
             resumeCommand:
-                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c {briefingConfig}",
             notes:
-                "Streamable HTTP MCP server injected via -c config override. resume --last reopens the most recent session."
+                "MCP and persistent AgentDeck developer instructions are supplied via -c overrides, including on resume and conversation reset."
         ),
         CLIProfile(
             id: "gemini", name: "Gemini CLI",
@@ -348,7 +306,8 @@ struct CLIProfile: Codable, Identifiable, Hashable {
         ),
         CLIProfile(
             id: "grok", name: "Grok Build",
-            command: "grok --always-approve",
+            command: "grok --always-approve --rules {briefing}",
+            resumeCommand: "grok --continue --always-approve --rules {briefing}",
             notes:
                 "Official Grok Build CLI (grok). Sign in, then configure AgentDeck with grok mcp using $AGENTDECK_MCP_URL."
         ),
@@ -412,6 +371,7 @@ struct RecruitRequest: Identifiable, Hashable {
 
 struct AppSettings: Codable {
     var sharedBrowserProfileID: UUID = UUID()
+    var shareAgentBrowserSignIns = true
     var openDefaultsWhenEmpty: Bool = true
     var defaultWorkingDirectory: String = "~/gitrepos"
     var downloadDirectory: String = DownloadLocation.defaultSetting
@@ -427,24 +387,38 @@ struct AppSettings: Codable {
     var stallAfterSeconds: Double = 90
     var worktreeRoot: String = "~/.agentdeck/worktrees"
     var appearance: AppAppearance = .system
+    var arrowColorHex = "B96B35"
     var showSidebar: Bool = false
     var showInspector: Bool = false
     var showBottomPanel: Bool = false
     var bottomPanelHeight: Double = 240
+    var workspaceMode: WorkspaceMode = .board
+    var approveAgentHandoffs = true
+    var automaticSubagents = true
+    var maximumConcurrentSubagents = SubagentLimits.defaultConcurrentWorkers
+    var concurrentSubagentDefaultUpdated = true
+    var subagentSplitLayout: SubagentSplitLayout = .automatic
+    var showUsagePanel = true
+    var usagePanelPosition = PanePoint(x: 960, y: 80)
+    var usagePanelSize = PaneSize(width: 420, height: 360)
 
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case sharedBrowserProfileID, openDefaultsWhenEmpty, defaultWorkingDirectory, downloadDirectory,
+        case sharedBrowserProfileID, shareAgentBrowserSignIns, openDefaultsWhenEmpty, defaultWorkingDirectory,
+            downloadDirectory,
             skillDirectories, disabledSkillIDs
         case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, idleAfterSeconds,
             stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector, showBottomPanel, bottomPanelHeight
+        case workspaceMode, approveAgentHandoffs, showUsagePanel, usagePanelPosition, usagePanelSize, arrowColorHex
+        case automaticSubagents, maximumConcurrentSubagents, concurrentSubagentDefaultUpdated, subagentSplitLayout
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppSettings()
         sharedBrowserProfileID = c.value(.sharedBrowserProfileID, default: d.sharedBrowserProfileID)
+        shareAgentBrowserSignIns = c.value(.shareAgentBrowserSignIns, default: d.shareAgentBrowserSignIns)
         openDefaultsWhenEmpty = c.value(.openDefaultsWhenEmpty, default: d.openDefaultsWhenEmpty)
         defaultWorkingDirectory = c.value(.defaultWorkingDirectory, default: d.defaultWorkingDirectory)
         let storedDownloadDirectory = c.value(.downloadDirectory, default: d.downloadDirectory)
@@ -463,42 +437,67 @@ struct AppSettings: Codable {
         stallAfterSeconds = c.value(.stallAfterSeconds, default: d.stallAfterSeconds)
         worktreeRoot = c.value(.worktreeRoot, default: d.worktreeRoot)
         appearance = c.value(.appearance, default: d.appearance)
+        arrowColorHex = c.value(.arrowColorHex, default: d.arrowColorHex)
         showSidebar = c.value(.showSidebar, default: d.showSidebar)
         showInspector = c.value(.showInspector, default: d.showInspector)
         showBottomPanel = c.value(.showBottomPanel, default: d.showBottomPanel)
         bottomPanelHeight = c.value(.bottomPanelHeight, default: d.bottomPanelHeight)
+        workspaceMode = c.value(.workspaceMode, default: d.workspaceMode)
+        approveAgentHandoffs = c.value(.approveAgentHandoffs, default: d.approveAgentHandoffs)
+        automaticSubagents = c.value(.automaticSubagents, default: d.automaticSubagents)
+        let storedWorkerLimit = c.value(.maximumConcurrentSubagents, default: d.maximumConcurrentSubagents)
+        let defaultAlreadyUpdated = c.value(.concurrentSubagentDefaultUpdated, default: false)
+        if !defaultAlreadyUpdated && storedWorkerLimit == SubagentLimits.legacyDefaultConcurrentWorkers {
+            maximumConcurrentSubagents = SubagentLimits.defaultConcurrentWorkers
+        } else {
+            maximumConcurrentSubagents = SubagentLimits.clampedConcurrentWorkers(storedWorkerLimit)
+        }
+        concurrentSubagentDefaultUpdated = true
+        subagentSplitLayout = c.value(.subagentSplitLayout, default: d.subagentSplitLayout)
+        showUsagePanel = c.value(.showUsagePanel, default: d.showUsagePanel)
+        usagePanelPosition = c.value(.usagePanelPosition, default: d.usagePanelPosition)
+        usagePanelSize = c.value(.usagePanelSize, default: d.usagePanelSize)
     }
 }
 
 struct PersistedState: Codable {
     var unrestrictedCLIDefaultsApplied: Bool = true
+    var sharedAgentBrowserProfilesApplied = true
     var sessions: [ManagedSession] = []
     var tasks: [BoardTask] = []
+    var handoffs: [TaskHandoff] = []
     var nextTaskID: Int = 1
     var log: [LogEntry] = []
     var settings: AppSettings = AppSettings()
     var cliProfiles: [CLIProfile] = CLIProfile.builtins
     var focusedSessionID: UUID? = nil
+    var selectedBrowserTabs: [UUID: UUID] = [:]
     var selectedPaneTabs: [UUID: UUID] = [:]
+    var expandedSubagentTabs: [UUID: UUID] = [:]
 
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case unrestrictedCLIDefaultsApplied, sessions, tasks, nextTaskID, log, settings, cliProfiles, focusedSessionID,
-            selectedPaneTabs
+        case unrestrictedCLIDefaultsApplied, sharedAgentBrowserProfilesApplied, sessions, tasks, nextTaskID, log,
+            settings, cliProfiles, focusedSessionID,
+            selectedBrowserTabs, selectedPaneTabs, expandedSubagentTabs, handoffs
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         unrestrictedCLIDefaultsApplied = c.value(.unrestrictedCLIDefaultsApplied, default: false)
+        sharedAgentBrowserProfilesApplied = c.value(.sharedAgentBrowserProfilesApplied, default: false)
         sessions = c.lenientArray(.sessions)
         tasks = c.lenientArray(.tasks)
+        handoffs = c.lenientArray(.handoffs)
         nextTaskID = c.value(.nextTaskID, default: 1)
         log = c.lenientArray(.log)
         settings = c.value(.settings, default: AppSettings())
         cliProfiles = c.value(.cliProfiles, default: CLIProfile.builtins)
         focusedSessionID = c.value(.focusedSessionID, default: nil)
+        selectedBrowserTabs = c.value(.selectedBrowserTabs, default: [:])
         selectedPaneTabs = c.value(.selectedPaneTabs, default: [:])
+        expandedSubagentTabs = c.value(.expandedSubagentTabs, default: [:])
     }
 }
 

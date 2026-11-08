@@ -2,10 +2,17 @@ import SwiftUI
 
 struct SidebarView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: $store.focusedSessionID) {
+            List(
+                selection: Binding(
+                    get: { store.focusedSessionID },
+                    set: { id in
+                        if let id { store.selectTab(id) } else { store.focusedSessionID = nil }
+                    })
+            ) {
                 Section("Sessions") {
                     ForEach(store.sessions) { s in
                         SessionRow(session: s)
@@ -21,6 +28,10 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: store.sessions.map(\.id))
+            .animation(
+                WorkspaceMotion.animation(reduceMotion: reduceMotion),
+                value: store.recruits.filter { $0.status == .pending }.map(\.id))
             Divider()
             HStack(spacing: 6) {
                 Circle().fill(store.mcpStatus.hasPrefix("listening") ? Color.green : Color.red).frame(
@@ -43,9 +54,14 @@ struct SidebarView: View {
         Button("Restart") { store.restartSession(s.id) }
         Button("Stop") { store.stopSession(s.id) }
         if s.kind == .cli {
+            if s.delegatedTaskID != nil {
+                Button("Promote to Main Conversation") { store.promoteToMainConversation(s.id) }
+                    .help("Preserves tasks and history. Restart the session afterward to reload its role and tools.")
+            }
             Button("New CLI Tab") { store.addCLITab(to: s.id) }
+                .disabled(store.cliTabSource(for: s.id) == nil)
             Button("Inject Note…") {
-                store.focusedSessionID = s.id
+                store.selectTab(s.id)
                 store.showInjectSheet = true
             }
             Button("Inject Context Now") { store.injectContextNow(s.id) }

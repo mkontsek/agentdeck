@@ -23,11 +23,11 @@ final class CanvasLayoutTests: XCTestCase {
         }
     }
 
-    func testSmallCanvasScrollsInsteadOfMakingPanesUnreadable() {
+    func testSmallCanvasFitsAllPanesWithoutScrolling() {
         let frames = CanvasLayout.frames(count: 5, viewport: CGSize(width: 600, height: 400))
         XCTAssertEqual(frames.count, 5)
-        XCTAssertTrue(frames.allSatisfy { $0.width >= 320 && $0.height >= 200 })
-        XCTAssertGreaterThan(frames.last!.maxY, 400)
+        XCTAssertTrue(frames.allSatisfy { $0.width > 0 && $0.height > 0 })
+        XCTAssertLessThan(frames.last!.maxY, 400)
         XCTAssertTrue(CanvasLayout.frames(count: 0, viewport: CGSize(width: 1000, height: 700)).isEmpty)
         XCTAssertTrue(CanvasLayout.frames(count: 2, viewport: .zero).isEmpty)
         XCTAssertTrue(CanvasLayout.frames(count: 2, viewport: CGSize(width: CGFloat.nan, height: 700)).isEmpty)

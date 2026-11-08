@@ -19,24 +19,31 @@ final class CLIProfileTests: XCTestCase {
             "codex": [
                 "--dangerously-bypass-approvals-and-sandbox", "-c",
                 "mcp_servers.agentdeck.url=\"\(store.mcpURL(for: session.id))\"",
+                "-c", "developer_instructions=" + BriefingInstructions.tomlString(store.briefingText(for: session)),
             ],
             "gemini": ["--yolo"],
             "antigravity": ["--dangerously-skip-permissions"],
-            "grok": ["--always-approve"],
+            "grok": ["--always-approve", "--rules", store.briefingText(for: session)],
         ]
         // Shell functions record arguments without launching a provider or reading its configuration.
         let stubs = """
-            claude() { printf '%s\\n' "$@"; }
-            codex() { printf '%s\\n' "$@"; }
-            gemini() { printf '%s\\n' "$@"; }
-            agy() { printf '%s\\n' "$@"; }
-            grok() { printf '%s\\n' "$@"; }
+            claude() { printf '%s\\0' "$@"; }
+            codex() { printf '%s\\0' "$@"; }
+            gemini() { printf '%s\\0' "$@"; }
+            agy() { printf '%s\\0' "$@"; }
+            grok() { printf '%s\\0' "$@"; }
             """
         for (id, arguments) in expectedArguments {
             session.cliProfileID = id
             let command = stubs + "\n" + store.launchCommand(for: session)
             let output = try Shell.run(["/bin/zsh", "-f", "-c", command])
-            XCTAssertEqual(output.split(separator: "\n").map { String($0) }, arguments, id)
+            var expected = arguments
+            if id == "codex" {
+                expected[expected.count - 1] =
+                    "developer_instructions=" + BriefingInstructions.tomlString(store.briefingText(for: session))
+            }
+            if id == "grok" { expected[expected.count - 1] = store.briefingText(for: session) }
+            XCTAssertEqual(output.split(separator: "\0").map { String($0) }, expected, id)
         }
         XCTAssertEqual(
             store.cliProfiles.first { $0.id == "shell" }?.command, "exec ${SHELL:-/bin/zsh} -l")
@@ -45,12 +52,19 @@ final class CLIProfileTests: XCTestCase {
             "claude": ["--continue"] + expectedArguments["claude"]!,
             "codex": ["resume", "--last"] + expectedArguments["codex"]!,
             "gemini": ["--yolo", "--resume", "latest"],
+            "grok": ["--continue"] + expectedArguments["grok"]!,
         ]
         for (id, arguments) in expectedResumeArguments {
             session.cliProfileID = id
             let command = stubs + "\n" + store.launchCommand(for: session, resume: true)
             let output = try Shell.run(["/bin/zsh", "-f", "-c", command])
-            XCTAssertEqual(output.split(separator: "\n").map { String($0) }, arguments, id)
+            var expected = arguments
+            if id == "codex" {
+                expected[expected.count - 1] =
+                    "developer_instructions=" + BriefingInstructions.tomlString(store.briefingText(for: session))
+            }
+            if id == "grok" { expected[expected.count - 1] = store.briefingText(for: session) }
+            XCTAssertEqual(output.split(separator: "\0").map { String($0) }, expected, id)
         }
         XCTAssertNil(store.cliProfiles.first { $0.id == "shell" }?.resumeCommand)
     }

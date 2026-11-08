@@ -74,7 +74,12 @@ final class BrowserDownloadTests: XCTestCase {
         var contents = ""
         for _ in 0..<100 {
             contents = (try? String(contentsOf: saved, encoding: .utf8)) ?? ""
-            if contents == "hello from agentdeck" { break }
+            // File creation precedes WebKit's completion callback; wait for both observable outcomes.
+            if contents == "hello from agentdeck",
+                store.log.contains(where: { $0.message.contains("saved agentdeck-download.txt") })
+            {
+                break
+            }
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertEqual(contents, "hello from agentdeck", store.log.map(\.message).joined(separator: "\n"))

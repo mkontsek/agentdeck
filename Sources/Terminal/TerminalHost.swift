@@ -3,12 +3,49 @@ import SwiftTerm
 
 /// A terminal view that reports focus clicks back to the host.
 final class DeckTerminalView: LocalProcessTerminalView {
+    static let textInputNotification = Notification.Name("AgentDeckTerminalTextInput")
     var onFocus: (() -> Void)?
+    private var pendingCanvasDisplay = false
+    var defersCanvasDisplay = false {
+        didSet {
+            if oldValue && !defersCanvasDisplay && pendingCanvasDisplay {
+                pendingCanvasDisplay = false
+                super.needsDisplay = true
+            }
+        }
+    }
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            if newValue && defersCanvasDisplay {
+                pendingCanvasDisplay = true
+            } else {
+                super.needsDisplay = newValue
+            }
+        }
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        if defersCanvasDisplay {
+            pendingCanvasDisplay = true
+        } else {
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
+        defersCanvasDisplay = false
         onFocus?()
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         super.mouseDown(with: event)
+    }
+
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        defersCanvasDisplay = false
+        // Publish only the input target, never the text or IME contents.
+        NotificationCenter.default.post(name: Self.textInputNotification, object: self)
+        super.insertText(string, replacementRange: replacementRange)
     }
 }
 
@@ -70,6 +107,11 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
 
     func send(id: UUID, text: String) {
         views[id]?.send(txt: text)
+    }
+
+    /// Application-provided text is a paste, so the CLI can distinguish its end from the submit key.
+    func paste(id: UUID, text: String) {
+        views[id]?.pasteText(text)
     }
 
     func applyTheme(dark: Bool) {

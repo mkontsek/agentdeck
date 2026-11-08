@@ -23,8 +23,22 @@ extension CLIProfile {
     func adoptingBriefingAndResumeDefaults() -> CLIProfile {
         guard let builtin = Self.builtins.first(where: { $0.id == id }) else { return self }
         var updated = self
-        let shippedBefore = ["claude": "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\""]
-        if updated.command == shippedBefore[id] { updated.command = builtin.command }
+        let shippedBefore = [
+            "claude": "claude --dangerously-skip-permissions --mcp-config \"{mcpConfigPath}\"",
+            "codex": "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+            "grok": "grok --always-approve",
+        ]
+        let previousResume = [
+            "codex":
+                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"'",
+            "grok": "grok --continue --always-approve",
+        ]
+        if updated.command == shippedBefore[id] {
+            updated.command = builtin.command
+            if let previous = previousResume[id], updated.resumeCommand == previous {
+                updated.resumeCommand = builtin.resumeCommand
+            }
+        }
         if updated.resumeCommand == nil, updated.command == builtin.command {
             updated.resumeCommand = builtin.resumeCommand
         }

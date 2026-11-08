@@ -18,13 +18,23 @@ struct AgentDeckApp: App {
         Settings {
             SettingsView().environmentObject(store)
         }
+        MenuBarExtra {
+            AgentStatusMenu(store: store)
+        } label: {
+            Label(
+                "AgentDeck · \(store.attentionCount)",
+                systemImage: store.attentionCount > 0 ? "checklist.checked" : "terminal")
+        }
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let attentionShortcut = AttentionShortcut()
+    private var preparingTermination = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppStore.shared.bootstrap()
+        attentionShortcut.start()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -34,7 +44,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        attentionShortcut.stop()
         AppStore.shared.shutdown()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !preparingTermination else { return .terminateLater }
+        preparingTermination = true
+        Task {
+            await AppStore.shared.prepareSessionRestoration()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -88,9 +109,17 @@ struct AppCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Session…") { store.showNewSession = true }.keyboardShortcut("n", modifiers: .command)
-            Button("New CLI Tab") { store.addCLITab(to: store.focusedSessionID) }
-                .keyboardShortcut("t", modifiers: .command)
-                .disabled(store.cliTabSource(for: store.focusedSessionID).flatMap { store.profile(for: $0) } == nil)
+            Button(store.session(store.focusedSessionID)?.kind == .browser ? "New Browser Tab" : "New CLI Tab") {
+                if let session = store.session(store.focusedSessionID), session.kind == .browser {
+                    store.addBrowserTab(to: session.id)
+                } else {
+                    store.addCLITab(to: store.focusedSessionID)
+                }
+            }
+            .keyboardShortcut("t", modifiers: .command)
+            .disabled(
+                store.session(store.focusedSessionID)?.kind != .browser
+                    && store.cliTabSource(for: store.focusedSessionID).flatMap { store.profile(for: $0) } == nil)
         }
         CommandMenu("Session") {
             Button("Next Tab") { store.selectAdjacentTab(1) }
@@ -130,7 +159,7 @@ struct AppCommands: Commands {
                 "=", modifiers: .command)
             Button("Smaller Text") { store.adjustFont(for: store.focusedSessionID, by: -1) }.keyboardShortcut(
                 "-", modifiers: .command)
-            Button("Reset Text Size") { store.resetFont(for: store.focusedSessionID) }.keyboardShortcut(
+            Button("Automatic Text Size") { store.resetFont(for: store.focusedSessionID) }.keyboardShortcut(
                 "0", modifiers: .command)
             Divider()
             Menu("Pane Size") {
@@ -162,6 +191,12 @@ struct AppCommands: Commands {
                 "i", modifiers: [.command, .option])
             Toggle("Show Task Board", isOn: $store.settings.showBottomPanel).keyboardShortcut(
                 "b", modifiers: [.command, .option])
+            Button("Shared Work") { store.settings.workspaceMode = .board }
+                .keyboardShortcut("1", modifiers: [.command, .option])
+            Button("Sessions") { store.settings.workspaceMode = .sessions }
+                .keyboardShortcut("2", modifiers: [.command, .option])
+            Toggle("CLI Usage", isOn: $store.settings.showUsagePanel)
+                .keyboardShortcut("u", modifiers: [.command, .option])
             Picker("Layout", selection: $store.settings.layoutMode) {
                 ForEach(LayoutMode.allCases) { Text($0.label).tag($0) }
             }

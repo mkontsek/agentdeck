@@ -29,6 +29,13 @@ enum ResumeDetection {
             // ~/.gemini/tmp/<directory name>/chats/session-*.json
             let dir = home + "/.gemini/tmp/" + URL(fileURLWithPath: cwd).lastPathComponent + "/chats"
             return (try? fm.contentsOfDirectory(atPath: dir))?.contains { $0.hasSuffix(".json") } ?? false
+        case "grok":
+            let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+            guard let encoded = cwd.addingPercentEncoding(withAllowedCharacters: safe) else { return false }
+            let dir = home + "/.grok/sessions/" + encoded
+            return (try? fm.contentsOfDirectory(atPath: dir))?.contains {
+                UUID(uuidString: $0) != nil && fm.fileExists(atPath: dir + "/" + $0 + "/events.jsonl")
+            } ?? false
         default:
             return nil
         }

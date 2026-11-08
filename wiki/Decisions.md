@@ -1,6 +1,100 @@
 # Decisions
 
+## 2026-11-08: Preserve native focus before responder transfer; route visible connectors
+
+Native tests reproduced WebKit asking NSWindow for focus, causing AppKit to resign a terminal before WKWebView rejected the request. Restoring focus afterward would already have disturbed typing/IME. A narrow, one-time public-method interception checks owned browser targets before resignation; ordinary AppKit responders pass through. Explicit user pane selection and actual pointer/Tab dispatch grant focus synchronously. Passive mounts may only fill an unclaimed responder chain. This preserves SwiftUI's native window lifecycle without replacing its window class or reading drafts.
+
+Automatic terminal fonts use geometry with the configured size as a ceiling; manual overrides remain fixed. The resize hotspot is bottom-right only. Connector geometry is cached and routed around window borders, with a small corner radius and independent persisted color. Fully covered endpoints retain their labeled relationship navigation.
+
+A changing-title native output fixture exposed thousands of global publications despite earlier unchanged-title suppression. Presentation metadata now coalesces at 100 ms across terminals, guarded by terminal identity/generation; raw output, input, task60 explicit paste/Enter and task79 inbox delivery are unchanged. Installation does not restart active sessions.
+
+
+## 2026-11-08: Browser splits, width fitting and screenshot mode
+
+The user requested terminal/browser split presentation by default, confirmed fitting page width with vertical scrolling, and requested double-click expansion over the entire canvas with exact geometry restoration. Keep browser ownership, session keys and native hosts independent from presentation. Existing saved owners default to split mode; opting out persists per owner. Browser width fitting replaces proportional browser zoom, while terminal scaling and manual text/zoom overrides remain.
+
+Demo mode uses opaque synthetic content rather than blur so screenshots cannot reveal text through weak blur. Mask all main-window identifiers and private panels while retaining live resource owners. This is temporary UI state, not a state/profile rewrite. Connections retain right angles, explicitly antialias native strokes and fill triangular arrowheads.
+
+## 2026-11-07: Fit startup windows and keep browsers with their owner
+
+The owner revised task80: browser tabs belong inside each agent/subagent mini-window. This supersedes the earlier separate-browser-window choice. Independent worker windows and parent relationships remain. Persist a separate per-owner browser selection so returning to a terminal does not change the automation target.
+
+Fit every window once at startup, then honor manual layout changes during the session. Scale text from displayed size; an explicit font override stays fixed. Use right-angle connections as requested. Native profiling found substantial CoreGraphics terminal draw cost under output load; defer background/off-screen display invalidations during canvas scrolling while keeping all parsing/input and the keyboard responder live. This reuses native layers instead of hiding views, copying terminal drafts, dropping PTY bytes, or changing the renderer.
+
+## 2026-11-07: Connected independent worker and browser windows
+
+- Supersedes the October 30 half-pane worker presentation. The user requested independently movable/resizable worker windows and separate owned-browser windows with visible relationships.
+- Reuse persistent pane geometry and existing native resource owners; never model a new window as a new provider session. Repair old shared pane IDs idempotently before startup without replacing session/profile/checkpoint identities.
+- Browser tabs group by owner, not shared sign-in profile. Shared cookies do not grant a caller control of another owner's tabs. Per-tab profile choices remain unchanged.
+- Draw non-interactive directional paths and offer equivalent labeled navigation. Maximizing hides paths while retaining relationship navigation and every native host. See [[Connected-Mini-Windows]].
+
+## 2026-11-07: Worker coordination bypasses terminal input (task79)
+
+Task60 repaired bracketed paste/Enter timing on an empty Codex prompt. It did not protect an unfinished human prompt: native regression now reproduces a worker expanding an 84-byte Unicode multiline draft to 127 bytes. Idle status, silence and focus do not prove an empty composer.
+
+Background paths now accept events into a separate atomic inbox and attach them automatically to MCP tool results. Stable IDs and explicit recipient receipts separate persistence, offering and acknowledgment; none means processing or completion approval. Published final tasks and handoff packages recover interrupted notification acceptance. No private terminal draft is read, stored or copied. Fresh initial tasks use provider argv; the task60 PTY path remains only for explicit human Send Input.
+
+A provider MCP result is a verified separate channel. The installed Codex CLI also advertises `queue`, but its help supplies neither an idempotency key nor a draft/lifecycle guarantee; this change does not speculate about those semantics or attach another app-server to a human conversation. Idle TUIs keep updates pending until their next tool call. This is a documented capability limit, not a timing workaround. Installation replaces the bundle only; the running host and its agents are never restarted.
+
+## 2026-11-06: Preserve WebKit popup handoff
+
+- Replacing the parent with a popup URL and returning nil destroys the opener context and can change a POST into a GET. The native two-origin fixture reproduced lost parent DOM and missing callback messaging with that implementation.
+- Return a new web view using WebKit's supplied configuration without modifying its website data store, process pool or content controller. Let WebKit navigate it and enforce opener/noopener semantics. This follows [Apple's WKUIDelegate contract](https://developer.apple.com/documentation/webkit/wkuidelegate/webview(_:createwebviewwith:for:windowfeatures:)).
+- Own transient native windows under the opener instead of creating persisted browser sessions or routing authentication to the external browser. Descendant cleanup follows the parent lifecycle and effective shared/isolated profile. Show the committed origin, constrain navigation to HTTP(S)/about:blank, and cap the entire tree at eight windows.
+- Google/Claude sign-in still requires provider-specific validation after relaunch. Fixture success proves the WebKit handoff defect and repair, not that a provider accepts embedded sign-in or that the requested Claude artifact is accessible.
+
+## 2026-11-06: Promote orphaned workers to main conversations
+
+- Closing a parent previously promoted the tab visually while retaining `delegatedTaskID`, preventing delegation and injecting obsolete worker-only instructions. Repair existing orphan records on load and clear the full role on parent removal.
+- Add a user-only Promote to Main Conversation action for attached workers. Preserve task ownership, evidence, completion approval and exact provider resume checkpoints. Clear the generated initial worker prompt so a future fresh launch cannot replay the old role.
+- Refresh the persisted briefing and server tool definitions immediately. Preserve running processes and show a restart notice; a typed user message cannot reliably replace launch-level instructions or refresh a provider's cached tool list. This supersedes the earlier rule that workers remain restricted after their parent closes. Attached workers retain the recursion restriction, and promotion is not an MCP tool.
+
+## 2026-11-04: Persistent CLI briefing and browser keyboard focus
+
+- A typed briefing pointer disappears after clearing a conversation. Use additive launch instructions for Claude, Codex and Grok, including exact resume; migrate only exact previously shipped templates.
+- Gemini and Antigravity lack an equivalent additive launch flag in the installed versions. Preserve their core prompts and user rules by appending a conditional global bootstrap instruction that reads the process-specific briefing after each reset. This depends on provider context discovery and model compliance; custom global context filenames require user configuration.
+- Render hidden browser automation in its own non-key/non-main panel, closed with its controller. Rejecting WebKit's focus request alone still lets AppKit clear the main window's current responder; the native regression reproduced that failure. A focused-pane guard remains for visible views. Restoring focus after an asynchronous action would interrupt a user's intervening focus change and would still drop keystrokes during the action.
+
+## 2026-10-30: Managed task workers and quiet usage refresh
+
+- Use separate managed CLI sessions for task workers. Provider-internal subagents have no stable cross-provider terminal identity; AgentDeck workers have their own task, PTY, MCP caller and restart checkpoint.
+- Keep the parent visible and instruct it to return promptly after delegation. This preserves an available conversation without attempting to interrupt or parse a provider's active turn. The behavior still depends on the provider following its briefing.
+- Start workers fresh and pass only published task context. Inherit the directory/worktree and require scoped work; do not silently create or merge worktrees. Recursion is prohibited, concurrency is bounded, and existing handoff/completion gates stay intact.
+- Use a persistent parent view plus a conditional half-pane child rather than swapping the parent out of a split container. Native terminal identity and focus survive orientation changes and collapse.
+- Replace CLI Profiles' selectable split-list layout with fixed-width explicit selection buttons. Use vertically labeled, scrollable task/profile fields so long labels cannot push editors outside the window.
+- Cache usage samples across panel openings and Claude credentials only in memory. Modern authentication contexts alone do not suppress legacy Keychain ACL dialogs, so wrap the serialized synchronous lookup in the legacy no-interaction switch and restore it immediately. Missing access yields unavailable usage instead of requesting permissions.
+- Defer the phone companion and speech input to [[Roadmap]].
+
 Each entry records what was chosen, the alternative, and the consequence. Newest first.
+
+## 2026-10-29: Restore each pane's own conversation
+
+- Restart continuation is separate from first-launch directory continuation. Fresh tabs previously kept `resumeLastConversation=false` permanently; enabling it on restart alone would let same-directory agents reopen the same latest conversation.
+- Capture exact Claude, Codex and Grok identities through the managed process's PID metadata/open-file names, without reading transcript bodies. Persist small atomic sidecars, refresh while running, and await a final capture before normal termination. Separate files allow the first upgrade to prepare active sessions without editing an older host's live `state.json`.
+- Respect explicit restart opt-outs and custom commands. Reject missing, stale or ambiguous identities rather than attaching an arbitrary conversation. Gemini has only a single-pane best-effort fallback; unsupported providers start normally. Restart fallbacks never resend the initial task.
+- Browser URL observation includes client-side chat navigation; the existing persistent browser profile supplies sign-ins. Relaunch restores conversations and pages, not live PTY processes or unsaved input.
+
+## 2026-10-29: Mouse resizing throughout the desk
+
+- Mini-windows and CLI usage share native AppKit edge/corner handling. Border hit testing wins over embedded native content while the interior passes clicks through; a visible bottom-right grip retains double-click reset.
+- Dragging a grid pane's border switches to Canvas at the displayed frames. Keeping Grid fixed had made pane resizing unavailable in the owner's current layout. Maximized panes remain viewport-sized.
+- Usage resizing uses the visible frame, not an oversized saved size, so shrinking after reducing the main window takes effect immediately. Bounds and opposite-edge anchoring prevent the panel from shifting unexpectedly.
+- The dotted background now renders in Grid as well as Canvas, with the website's white 14% dots, 16-point spacing and dark background. Light appearance uses dark dots.
+
+## 2026-10-28: Share sign-ins across agent and ordinary browser panes
+
+- The owner explicitly chose shared sign-ins across all AgentDeck browsers, including agent-controlled panes. This supersedes the mandatory companion isolation decision from October 22 and profile lock from October 25.
+- New companions use the existing shared persistent WebKit profile. A one-time migration switches old companions to it while retaining their separate-profile UUIDs and data. Later explicit Separate account choices persist.
+- Closing an agent removes its companion tab but never the shared profile. The toolbar exposes the current profile; Settings can make new companions separate by default.
+- No cookie copying, password database or new password prompt. WebKit persists website data locally under the macOS account; server expiry, revocation and embedded-login restrictions remain outside AgentDeck's control. Agents can use the same signed-in accounts, but browser tools still target only the caller's own tab.
+
+## 2026-10-28: Explicit coordination and default-account usage
+
+- Work becomes the primary workspace while Sessions preserves the native desk. Handoffs are persisted packages with independent approval, delivery and acceptance states. Ownership transfers on recipient acknowledgment, not notification delivery.
+- New tasks require user completion approval; legacy tasks keep their old contract. Owner/orchestrator mutation checks and revision validation prevent accidental overwrites and stale handoff acceptance through MCP. These are app-level policies on trusted local identities, not stronger process isolation.
+- Context comes from intentionally shared task fields and supplied artifacts. Automatic transcript harvesting was rejected because it contradicts private coordination.
+- Account usage appears once per CLI profile in a movable mini-window. Use existing default logins and provider quota APIs; never spend model tokens or infer missing limits. Unsupported providers and expired credentials remain explicit. Custom account configurations require separate future connectors.
+- Open/close and expand/collapse transitions share a 240 ms motion policy and honor Reduce Motion. Pane layout uses stable identities so animations do not replace native PTY containers. Work/Sessions keeps the terminal workspace mounted, with keyboard focus disabled while hidden.
 
 ## 2026-10-25: Pre-publication security review
 

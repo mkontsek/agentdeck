@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BottomPanelView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = 0
     @State private var editing: BoardTask?
 
@@ -32,6 +33,7 @@ struct BottomPanelView: View {
             if tab == 0 { TaskBoardView(editing: $editing) } else { LogView() }
         }
         .sheet(item: $editing) { TaskEditorSheet(task: $0) }
+        .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: tab)
     }
 }
 
@@ -88,11 +90,13 @@ struct TaskBoardView: View {
         .contextMenu(forSelectionType: Int.self) { ids in
             Button("Edit") { if let id = ids.first { editing = store.tasks.first { $0.id == id } } }
             Menu("Hand off to") {
-                ForEach(store.sessions.filter { $0.kind == .cli }) { s in
+                ForEach(store.sessions.filter { $0.kind == .cli && store.profile(for: $0)?.supportsMCP == true }) { s in
                     Button(s.name) {
                         for id in ids {
-                            _ = try? store.handoff(
-                                from: nil, to: s, taskID: id, title: nil, description: nil, note: nil)
+                            do {
+                                _ = try store.handoff(
+                                    from: nil, to: s, taskID: id, title: nil, description: nil, note: nil)
+                            } catch { store.lastError = error.localizedDescription }
                         }
                     }
                 }
@@ -102,56 +106,6 @@ struct TaskBoardView: View {
         } primaryAction: { ids in
             if let id = ids.first { editing = store.tasks.first { $0.id == id } }
         }
-    }
-}
-
-struct TaskEditorSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-    @State var task: BoardTask
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(task.id == 0 ? "New Task" : "Task #\(task.id)").font(.title3).bold()
-            Form {
-                TextField("Title", text: $task.title)
-                Picker("Status", selection: $task.status) { ForEach(TaskStatus.allCases) { Text($0.label).tag($0) } }
-                Picker("Owner", selection: $task.ownerSessionID) {
-                    Text("Unassigned").tag(UUID?.none)
-                    ForEach(store.sessions) { s in Text(s.name).tag(UUID?.some(s.id)) }
-                }
-                LabeledContent("Description") {
-                    TextEditor(text: $task.description).font(.body).frame(height: 70)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray.opacity(0.3)))
-                }
-                LabeledContent("Notes") {
-                    TextEditor(text: $task.notes).font(.body).frame(height: 90)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray.opacity(0.3)))
-                }
-            }
-            HStack {
-                if task.id != 0 {
-                    Button("Delete", role: .destructive) {
-                        store.deleteTask(task.id)
-                        dismiss()
-                    }
-                }
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(task.id == 0 ? "Create" : "Save") {
-                    if task.id == 0 {
-                        store.createTask(
-                            title: task.title, description: task.description, owner: task.ownerSessionID,
-                            status: task.status, notes: task.notes)
-                    } else {
-                        store.updateTask(task)
-                    }
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction).disabled(task.title.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding(20).frame(width: 520)
     }
 }
 

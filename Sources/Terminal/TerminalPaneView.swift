@@ -10,7 +10,9 @@ struct TerminalPaneView: View {
         ZStack {
             TerminalRepresentable(
                 terminal: store.terminals.view(for: session.id), font: store.font(for: session),
-                focused: store.focusedSessionID == session.id, generation: rt?.generation ?? 0)
+                focused: !store.isDemoMode && store.focusedSessionID == session.id
+                    && store.settings.workspaceMode == .sessions,
+                generation: rt?.generation ?? 0)
             if rt?.isRunning != true {
                 VStack(spacing: 8) {
                     if rt?.exitCode == 127, let profile = store.profile(for: session), let url = profile.setupURL {
@@ -37,7 +39,7 @@ struct TerminalRepresentable: NSViewRepresentable {
     let generation: Int
 
     final class Coordinator {
-        var wasFocused = false
+        var wasFocused: Bool?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -60,7 +62,10 @@ struct TerminalRepresentable: NSViewRepresentable {
     }
 
     private func attach(to c: TerminalContainerView, coordinator: Coordinator) {
-        let becameFocused = focused && !coordinator.wasFocused
+        // Model selection permits focus only if the native responder is unclaimed. Explicit user
+        // selection focuses synchronously in AppStore.focusSession, before this presentation update.
+        let becameFocused = focused && coordinator.wasFocused == false
+        let becameUnfocused = !focused && coordinator.wasFocused == true
         coordinator.wasFocused = focused
         guard let tv = terminal else {
             for view in c.subviews { view.removeFromSuperview() }
@@ -68,6 +73,8 @@ struct TerminalRepresentable: NSViewRepresentable {
             return
         }
         var attached = false
+        if focused { tv.defersCanvasDisplay = false }
+        if becameUnfocused, c.window?.firstResponder === tv { c.window?.makeFirstResponder(nil) }
         if tv.superview !== c {
             for view in c.subviews { view.removeFromSuperview() }
             tv.removeFromSuperview()
@@ -82,7 +89,7 @@ struct TerminalRepresentable: NSViewRepresentable {
     }
 }
 
-/// Defers keyboard focus until SwiftUI has attached the selected tab to a window.
+/// A late attachment can fill an unclaimed responder chain, but cannot take an existing editor.
 final class TerminalContainerView: NSView {
     var focusWhenAttached = false
 
@@ -94,6 +101,7 @@ final class TerminalContainerView: NSView {
     func focusTerminalIfNeeded() {
         guard focusWhenAttached, let window, let terminal = subviews.first else { return }
         focusWhenAttached = false
+        guard window.firstResponder == nil || window.firstResponder === window else { return }
         window.makeFirstResponder(terminal)
     }
 }

@@ -75,6 +75,11 @@ struct InspectorView: View {
                     if let t = rt.title, !t.isEmpty { LabeledContent("Title", value: t) }
                 }
                 Section("Capabilities") {
+                    if s.delegatedTaskID != nil {
+                        Button("Promote to Main Conversation") { store.promoteToMainConversation(s.id) }
+                        Text("Keeps tasks and history. Restart the session afterward to reload its role and tools.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Text(
                         (store.profile(for: s)?.supportsMCP ?? false)
                             ? "MCP tools: whoami, list_sessions, read_board, create_task, update_task, handoff, send_message, log"
@@ -84,7 +89,9 @@ struct InspectorView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     Toggle("Orchestrator (may recruit sessions)", isOn: bind(s, \.isOrchestrator))
                     Toggle("Include status summary in start-up briefing", isOn: bind(s, \.autoInjectContext))
-                    Toggle("Continue last conversation on start", isOn: bind(s, \.resumeLastConversation))
+                    Toggle("Resume this session after restart", isOn: bind(s, \.resumeOnRestart))
+                        .disabled(!(store.profile(for: s)?.canResume ?? false))
+                    Toggle("Use latest conversation on first start", isOn: bind(s, \.resumeLastConversation))
                         .disabled(!(store.profile(for: s)?.canResume ?? false))
                     Toggle("Start at launch", isOn: bind(s, \.autoStart))
                 }
@@ -96,45 +103,39 @@ struct InspectorView: View {
             } else {
                 Section("Browser") {
                     TextField("Start URL", text: bind(s, \.url).unwrap(""))
-                    if s.agentOwnerID != nil {
-                        LabeledContent("Profile", value: "Isolated (agent browser)")
-                        Text("An agent's private browser always keeps its own cookies and sign-ins.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Picker(
-                            "Profile",
-                            selection: Binding(
-                                get: { s.browserProfileMode },
-                                set: { store.setBrowserProfileMode($0, for: s.id) }
-                            )
-                        ) {
-                            ForEach(BrowserProfileMode.allCases) { Text($0.label).tag($0) }
-                        }
-                        Text("Changing profile reloads this pane. Separate account keeps its own saved sign-ins.")
-                            .font(.caption).foregroundStyle(.secondary)
+                    Picker(
+                        "Profile",
+                        selection: Binding(
+                            get: { s.browserProfileMode }, set: { store.setBrowserProfileMode($0, for: s.id) })
+                    ) {
+                        ForEach(BrowserProfileMode.allCases) { Text($0.label).tag($0) }
                     }
+                    Text(
+                        "Shared AgentDeck reuses locally saved sign-ins in all shared panes, including agent browsers. Separate account restores this pane’s own profile. Changing profile reloads the pane."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                     if let t = rt.title, !t.isEmpty { LabeledContent("Title", value: t) }
                     Toggle("Start at launch", isOn: bind(s, \.autoStart))
                 }
             }
             Section("Appearance") {
-                if s.kind == .cli {
+                Group {
                     HStack {
-                        Text("Font size")
+                        Text("Text size")
                         Spacer()
                         Button {
                             store.adjustFont(for: s.id, by: -1)
                         } label: {
                             Image(systemName: "minus")
                         }
-                        Text("\(Int(s.fontSizeOverride ?? store.settings.globalFontSize))").monospacedDigit().frame(
+                        Text(store.textSizeLabel(for: s)).monospacedDigit().frame(
                             width: 24)
                         Button {
                             store.adjustFont(for: s.id, by: 1)
                         } label: {
                             Image(systemName: "plus")
                         }
-                        Button("Global") { store.resetFont(for: s.id) }.disabled(s.fontSizeOverride == nil)
+                        Button("Automatic") { store.resetFont(for: s.id) }.disabled(s.fontSizeOverride == nil)
                     }.buttonStyle(.bordered).controlSize(.small)
                 }
                 HStack {

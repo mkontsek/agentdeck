@@ -3,7 +3,7 @@ import XCTest
 
 final class BrowserAutomationTests: XCTestCase {
     @MainActor
-    func testPrivateBrowserToolsDriveOnlyTheCallersCompanionTab() async throws {
+    func testBrowserToolsDriveOnlyTheCallersCompanionTab() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -12,10 +12,15 @@ final class BrowserAutomationTests: XCTestCase {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.titled], backing: .buffered,
             defer: false)
-        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        let input = NSTextField(frame: NSRect(x: 20, y: 20, width: 200, height: 30))
+        window.contentView?.addSubview(input)
+        window.makeFirstResponder(input)
+        let inputResponder = try XCTUnwrap(window.firstResponder)
         defer {
             window.orderOut(nil)
             store.shutdown()
+            BrowserHost.deleteProfile(store.settings.sharedBrowserProfileID)
             try? FileManager.default.removeItem(at: directory)
         }
         let agent = store.addSession(ManagedSession(name: "Agent", kind: .cli), start: false)
@@ -25,24 +30,27 @@ final class BrowserAutomationTests: XCTestCase {
         let html = """
             <h1 id="t">Hello</h1><button onclick="document.getElementById('t').textContent='Clicked'">Press</button>
             <form onsubmit="event.preventDefault(); document.title='submitted:' + document.getElementById('q').value">
-            <input id="q" name="q"></form>
+            <input id="q" name="q" autofocus></form>
             """
         let encoded = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
         let nav = await store.invokeTool(
             name: "browser_navigate", args: ["url": "data:text/html," + encoded, "wait_ms": 100], caller: agent.id)
         XCTAssertFalse(nav.isError, nav.text)
+        XCTAssertTrue(
+            window.firstResponder === inputResponder,
+            "Navigation/autofocus must preserve keyboard focus: was \(inputResponder), now \(String(describing: window.firstResponder))"
+        )
         XCTAssertTrue(nav.text.contains("Hello"), nav.text)
 
         let companion = try XCTUnwrap(store.agentBrowser(for: agent.id))
-        XCTAssertEqual(companion.paneID, agent.paneID, "companion lives in the agent's pane")
-        XCTAssertEqual(companion.browserProfileMode, .isolated)
+        XCTAssertEqual(companion.paneID, agent.paneID, "browser is a tab in its owning agent window")
+        XCTAssertEqual(companion.browserProfileMode, .shared)
         XCTAssertEqual(store.focusedSessionID, agent.id, "opening the browser must not steal focus")
         XCTAssertEqual(store.selectedPaneTabs[agent.paneID], agent.id, "terminal tab stays in front")
         XCTAssertNil(store.agentBrowser(for: other.id), "other sessions get their own browser only on use")
         store.setBrowserProfileMode(.shared, for: companion.id)
-        XCTAssertEqual(store.session(companion.id)?.browserProfileMode, .isolated, "companions stay isolated")
-        XCTAssertNotNil(store.lastError)
-        store.lastError = nil
+        XCTAssertEqual(store.session(companion.id)?.browserProfileMode, .shared)
+        XCTAssertNil(store.lastError)
         XCTAssertTrue(store.toolDefinitions(caller: agent.id).contains { ($0["name"] as? String) == "browser_read" })
         XCTAssertFalse(store.contextSummary(for: agent).contains(companion.name))
 
@@ -62,6 +70,27 @@ final class BrowserAutomationTests: XCTestCase {
             caller: agent.id)
         XCTAssertFalse(typed.isError, typed.text)
         XCTAssertTrue(typed.text.contains("submitted:needle"), typed.text)
+        XCTAssertTrue(
+            window.firstResponder === inputResponder,
+            "DOM focus during typing must not steal native focus: was \(inputResponder), now \(String(describing: window.firstResponder))"
+        )
+
+        let controller = try XCTUnwrap(store.browsers.controllers[companion.id])
+        let automationWindow = try XCTUnwrap(controller.webView.window)
+        XCTAssertFalse(automationWindow === window)
+        XCTAssertFalse(automationWindow.canBecomeKey)
+        XCTAssertFalse(automationWindow.canBecomeMain)
+        _ = await controller.evaluate("setTimeout(() => document.getElementById('q').focus(), 20)")
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertTrue(window.firstResponder === inputResponder, "Delayed page focus must preserve keyboard input")
+        XCTAssertFalse(controller.webView.becomeFirstResponder())
+        controller.webView.allowsKeyboardFocus = true
+        controller.webView.requestKeyboardFocus()
+        XCTAssertTrue(
+            controller.webView.window?.firstResponder === controller.webView,
+            "A selected browser must remain interactive")
+        controller.webView.allowsKeyboardFocus = false
+        window.makeFirstResponder(input)
 
         let missing = await store.invokeTool(name: "browser_click", args: ["selector": "#nope"], caller: agent.id)
         XCTAssertTrue(missing.isError)
@@ -75,5 +104,6 @@ final class BrowserAutomationTests: XCTestCase {
 
         store.removeSession(agent.id)
         XCTAssertNil(store.session(companion.id), "companion is removed with its owner")
+        XCTAssertFalse(automationWindow.isVisible, "Disposing a browser closes its rendering panel")
     }
 }

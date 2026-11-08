@@ -62,7 +62,8 @@ extension AppStore {
                                 ?? "0.0.0",
                         ],
                         "instructions":
-                            "AgentDeck coordinates several AI agent sessions. Use list_sessions and read_board to see the others, update_task to claim/finish work, handoff to delegate a task to another session, send_message for a free-form note.",
+                            "AgentDeck coordinates several AI agent sessions. Use list_sessions and read_board to see the others, update_task to claim/finish work, handoff to transfer existing work, send_message for a free-form note. "
+                            + Self.inboxInstructions + " " + (session(caller).map { subagentBriefing(for: $0) } ?? ""),
                     ]))
         case "ping": return json(rpcResult(id: id, [:]))
         case "tools/list": return json(rpcResult(id: id, ["tools": toolDefinitions(caller: caller)]))
@@ -71,7 +72,11 @@ extension AppStore {
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let args = params["arguments"] as? [String: Any] ?? [:]
-            let r = await invokeTool(name: name, args: args, caller: caller)
+            let generation = caller.flatMap { runtime[$0]?.generation }
+            var r = await invokeTool(name: name, args: args, caller: caller)
+            if let caller, name != "read_inbox", runtime[caller]?.generation == generation {
+                r = attachInbox(to: r, caller: caller)
+            }
             return json(rpcResult(id: id, ["content": r.content, "isError": r.isError]))
         default:
             return json(rpcError(id: id, code: -32601, message: "method not found: \(m)"))
@@ -100,6 +105,8 @@ extension AppStore {
             if let b = s.worktreeBranch { d["worktree_branch"] = b }
             if let u = s.url { d["url"] = u }
             if let owner = s.agentOwnerID { d["agent_browser_of"] = self.name(of: owner) }
+            if let parent = s.parentSessionID { d["parent_session_id"] = parent.uuidString }
+            if let task = s.delegatedTaskID { d["delegated_task_id"] = task }
             if let q = rt?.pendingQuestion { d["pending_question"] = q }
             if let t = rt?.title, !t.isEmpty { d["title"] = t }
             if let m = rt?.modelName { d["model"] = m }
@@ -115,6 +122,8 @@ extension AppStore {
             var d: [String: Any] = [
                 "id": t.id, "title": t.title, "description": t.description, "status": t.status.rawValue,
                 "notes": t.notes, "created_by": t.createdBy, "updated_at": f.string(from: t.updatedAt),
+                "requires_approval": t.requiresApproval, "dependencies": t.dependencies,
+                "history": t.events.map { ["at": f.string(from: $0.at), "actor": $0.actor, "message": $0.message] },
             ]
             d["owner"] = t.ownerSessionID.map(self.name(of:)) ?? NSNull()
             d["owner_id"] = t.ownerSessionID?.uuidString ?? NSNull()
@@ -148,47 +157,59 @@ extension AppStore {
                 ["skill_id": str("Exact id returned by list_skills")], required: ["skill_id"]),
             tool(
                 "read_board", "Read the shared task board.",
-                ["status": str("Filter: todo | in-progress | done | blocked")]),
+                ["status": str("Filter: todo | in-progress | review | awaiting-approval | done | blocked")]),
             tool(
                 "create_task", "Add a task to the shared board.",
                 [
                     "title": str("Short title"), "description": str("What needs to be done"),
-                    "owner": sessionRef, "status": str("todo | in-progress | done | blocked (default todo)"),
+                    "owner": sessionRef,
+                    "status": str("todo | in-progress | review | awaiting-approval | done | blocked (default todo)"),
                     "notes": str("Initial notes"),
                 ], required: ["title"]),
             tool(
                 "update_task", "Update a task: claim it (owner=me), change status, append a note.",
                 [
                     "task_id": ["type": "integer", "description": "Task id from read_board"],
-                    "status": str("todo | in-progress | done | blocked"),
+                    "status": str("todo | in-progress | review | awaiting-approval | done | blocked"),
                     "owner": str("Session name/id, \"me\", or \"none\" to unassign"),
                     "notes": str("Appended to the task notes"), "title": str("New title"),
                     "description": str("New description"),
+                    "dependencies": ["type": "array", "items": ["type": "integer"]],
                 ], required: ["task_id"]),
             tool(
                 "handoff",
-                "Hand a task to another session. Assigns the task to it and delivers a message into that session's input (queued if it is busy).",
+                "Prepare a persistent handoff package. User approval may be required. The recipient must accept before ownership changes.",
                 [
                     "target_session": sessionRef,
                     "task_id": ["type": "integer", "description": "Existing task to hand off"],
                     "title": str("Title for a new task if task_id is not given"),
                     "description": str("Details for a new task"),
-                    "note": str("Extra context for the receiving agent"),
+                    "note": str("Published summary for the receiving agent"),
+                    "constraints": str("Constraints to preserve"),
+                    "artifacts": [
+                        "type": "array", "items": ["type": "string"],
+                        "description": "Explicitly shared file paths or URLs; contents are not automatically read",
+                    ], "verification": str("Checks performed and their results"),
+                    "next_action": str("What the recipient should do next"),
                 ], required: ["target_session"]),
             tool(
                 "send_message",
-                "Type a free-form message into another CLI session as if the user typed it (queued if busy).",
+                "Accept a message into a durable inbox, delivered in recipient MCP tool results without terminal input. Acceptance is not processing; idle CLIs are not woken. Reuse message_id on retries.",
                 [
-                    "target_session": sessionRef, "text": str("Single-line message"),
-                ], required: ["target_session", "text"]),
+                    "target_session": sessionRef, "text": str("Message"),
+                    "message_id": str("Required caller-generated unique ID; reuse unchanged on retries"),
+                ], required: ["target_session", "text", "message_id"]),
             tool(
                 "log", "Append a line to the orchestration log shown in the app.",
                 [
                     "message": str("Text"), "level": str("info | warn | error"),
                 ], required: ["message"]),
         ]
+        tools += inboxToolDefinitions()
+        tools += coordinationToolDefinitions()
+        tools += subagentToolDefinitions(caller: caller)
         if let caller, session(caller)?.kind == .cli { tools += browserToolDefinitions() }
-        if let caller, session(caller)?.isOrchestrator == true {
+        if let caller, session(caller)?.isOrchestrator == true, session(caller)?.delegatedTaskID == nil {
             tools.append(
                 tool(
                     "recruit_session",
@@ -267,6 +288,9 @@ extension AppStore {
 
     func callTool(name: String, args: [String: Any], caller: UUID?) -> ToolResult {
         guard let caller, session(caller) != nil else { return fail("Connect using a managed session's MCP URL") }
+        if let result = inboxTool(name: name, args: args, caller: caller) { return result }
+        if let result = coordinationTool(name: name, args: args, caller: caller) { return result }
+        if let result = subagentTool(name: name, args: args, caller: caller) { return result }
         let callerName = self.name(of: caller)
         let argSummary = args.map { "\($0.key)=\(String(describing: $0.value).prefix(40))" }.sorted().joined(
             separator: ", ")
@@ -303,37 +327,21 @@ extension AppStore {
             guard let title = args["title"] as? String, !title.isEmpty else { return fail("title is required") }
             let owner = (args["owner"] as? String).flatMap { resolveSession($0, from: caller) }?.id
             if args["owner"] != nil, owner == nil { return fail("unknown owner") }
+            if let owner, owner != caller {
+                return fail("Create work for yourself or unassigned, then use handoff to delegate it.")
+            }
             let requestedStatus = (args["status"] as? String).flatMap(TaskStatus.init(rawValue:))
             if args["status"] != nil, requestedStatus == nil { return fail("invalid status") }
             let st = requestedStatus ?? .todo
             let t = createTask(
                 title: title, description: args["description"] as? String ?? "", owner: owner, status: st,
-                notes: args["notes"] as? String ?? "", createdBy: callerName)
+                notes: args["notes"] as? String ?? "", createdBy: callerName, creatorID: caller)
             return ok(taskInfos().first { ($0["id"] as? Int) == t.id } ?? [:])
         case "update_task":
-            guard let tid = args["task_id"] as? Int, var t = tasks.first(where: { $0.id == tid }) else {
-                return fail("unknown task_id")
-            }
-            if let s = args["status"] as? String {
-                guard let st = TaskStatus(rawValue: s) else { return fail("invalid status \(s)") }
-                t.status = st
-            }
-            if let o = args["owner"] as? String {
-                if o.lowercased() == "none" || o.isEmpty {
-                    t.ownerSessionID = nil
-                } else if let s = resolveSession(o, from: caller) {
-                    t.ownerSessionID = s.id
-                } else {
-                    return fail("unknown session \(o)")
-                }
-            }
-            if let n = args["notes"] as? String, !n.isEmpty {
-                t.notes += (t.notes.isEmpty ? "" : "\n") + "[\(callerName)] \(n)"
-            }
-            if let v = args["title"] as? String, !v.isEmpty { t.title = v }
-            if let v = args["description"] as? String { t.description = v }
-            updateTask(t, by: callerName)
-            return ok(taskInfos().first { ($0["id"] as? Int) == tid } ?? [:])
+            do {
+                let task = try updateTaskFromAgent(args, caller: caller)
+                return ok(taskInfos().first { ($0["id"] as? Int) == task.id } ?? [:])
+            } catch { return fail(error.localizedDescription) }
         case "handoff":
             guard let ref = args["target_session"] as? String, let target = resolveSession(ref, from: caller) else {
                 return fail("unknown target_session; call list_sessions")
@@ -342,14 +350,15 @@ extension AppStore {
             do {
                 let r = try handoff(
                     from: caller, to: target, taskID: args["task_id"] as? Int, title: args["title"] as? String,
-                    description: args["description"] as? String, note: args["note"] as? String)
-                let queued =
-                    target.kind == .cli && runtime[target.id]?.isRunning == true
-                    && profile(for: target)?.supportsMCP == true
+                    description: args["description"] as? String, note: args["note"] as? String,
+                    constraints: args["constraints"] as? String ?? "", artifacts: args["artifacts"] as? [String] ?? [],
+                    verification: args["verification"] as? String ?? "",
+                    nextAction: args["next_action"] as? String ?? "Review the shared context and continue the task.")
                 return ok([
-                    "task_id": r.task.id, "target": target.name,
-                    "delivered": r.delivered
-                        ? "now" : (queued ? "queued until idle" : "assigned only (session stopped or browser)"),
+                    "task_id": r.task.id, "handoff_id": r.handoff.id.uuidString, "target": target.name,
+                    "status": r.handoff.status.rawValue,
+                    "note":
+                        "Ownership stays with the sender until the recipient calls accept_handoff. User approval may be required.",
                 ])
             } catch { return fail(error.localizedDescription) }
         case "send_message":
@@ -358,15 +367,21 @@ extension AppStore {
             }
             guard let text = args["text"] as? String, !text.isEmpty else { return fail("text is required") }
             guard target.kind == .cli else {
-                return fail("\(target.name) is a browser session; messages can only be typed into CLI sessions")
+                return fail("\(target.name) is a browser session; coordination inboxes belong to CLI sessions")
             }
-            let idle = runtime[target.id]?.status.acceptsInjection == true
-            guard profile(for: target)?.supportsMCP == true else {
-                return fail("Automated messages are disabled for this CLI profile")
+            guard let messageID = args["message_id"] as? String,
+                !messageID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, messageID.utf8.count <= 400
+            else {
+                return fail("message_id is required (up to 400 bytes); generate a unique ID and reuse it on retries")
             }
-            let delivered = inject(
-                target.id, text: "[message from \(callerName)] \(text)", source: callerName, queueIfBusy: true)
-            return delivered ? ok(["delivered": idle ? "now" : "queued until idle"]) : fail("session is not running")
+            let key = "message:\(caller):\(messageID)"
+            guard let event = queueCoordination(target.id, text: text, source: callerName, key: key) else {
+                return fail(lastError ?? "Target does not support a coordination inbox")
+            }
+            return ok([
+                "accepted": true, "message_id": event.id.uuidString, "receipt": event.receipt.rawValue,
+                "channel": "durable-inbox", "submitted": false, "processed": false,
+            ])
         case "log":
             guard let m = args["message"] as? String else { return fail("message is required") }
             addLog(
@@ -390,7 +405,7 @@ extension AppStore {
                 "note": "The user must approve this in AgentDeck. Poll recruit_status.",
             ])
         case "recruit_status":
-            guard session(caller)?.isOrchestrator == true else {
+            guard session(caller)?.isOrchestrator == true, session(caller)?.delegatedTaskID == nil else {
                 return fail("only the Orchestrator session may inspect recruits")
             }
             guard let rid = (args["request_id"] as? String).flatMap(UUID.init(uuidString:)),

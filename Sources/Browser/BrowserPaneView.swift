@@ -9,7 +9,7 @@ struct BrowserPaneView: View {
         if store.runtime[session.id]?.isRunning == true,
             let controller = store.browsers.controllers[session.id]
         {
-            BrowserInner(controller: controller)
+            BrowserInner(controller: controller, session: session)
         } else {
             Button("Start browser") { store.restartSession(session.id) }
                 .buttonStyle(.borderedProminent)
@@ -18,7 +18,9 @@ struct BrowserPaneView: View {
 }
 
 private struct BrowserInner: View {
+    @EnvironmentObject var store: AppStore
     @ObservedObject var controller: BrowserController
+    let session: ManagedSession
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,34 +43,80 @@ private struct BrowserInner: View {
                 TextField("URL", text: $controller.urlText)
                     .textFieldStyle(.roundedBorder).font(.caption)
                     .onSubmit { controller.load(controller.urlText) }
+                Menu {
+                    ForEach(BrowserProfileMode.allCases) { mode in
+                        Button(mode.label) { store.setBrowserProfileMode(mode, for: session.id) }
+                    }
+                } label: {
+                    Image(systemName: session.browserProfileMode == .shared ? "person.2.fill" : "person.fill")
+                }
+                .help(
+                    session.browserProfileMode == .shared
+                        ? "Shared sign-ins · saved locally across AgentDeck panes"
+                        : "Separate account · this pane’s own saved sign-ins"
+                )
+                .accessibilityLabel("Browser profile: \(session.browserProfileMode.label)")
                 if controller.isLoading { ProgressView().controlSize(.small) }
             }
             .buttonStyle(.borderless)
             .padding(.horizontal, 6).padding(.vertical, 4)
             Divider()
-            WebViewRepresentable(webView: controller.webView)
+            WebViewRepresentable(
+                webView: controller.webView,
+                zoom: store.browserZoomOverride(for: session),
+                focused: !store.isDemoMode && store.focusedSessionID == session.id
+                    && store.settings.workspaceMode == .sessions)
         }
     }
 }
 
 struct WebViewRepresentable: NSViewRepresentable {
-    let webView: WKWebView
+    let webView: FocusProtectedWebView
+    var zoom: Double? = nil
+    let focused: Bool
 
-    func makeNSView(context: Context) -> NSView {
-        let c = NSView()
+    func makeNSView(context: Context) -> BrowserContainerView {
+        let c = BrowserContainerView()
         c.autoresizesSubviews = true
         attach(c)
         return c
     }
 
-    func updateNSView(_ c: NSView, context: Context) { attach(c) }
+    func updateNSView(_ c: BrowserContainerView, context: Context) { attach(c) }
 
-    private func attach(_ c: NSView) {
+    static func dismantleNSView(_ c: BrowserContainerView, coordinator: ()) {
+        c.focusWhenAttached = false
+        for case let view as FocusProtectedWebView in c.subviews {
+            view.allowsKeyboardFocus = false
+            view.removeFromSuperview()
+        }
+    }
+
+    private func attach(_ c: BrowserContainerView) {
+        webView.pageFit.setZoom(manual: zoom)
+        webView.allowsKeyboardFocus = focused
         if webView.superview !== c {
             webView.removeFromSuperview()
             webView.frame = c.bounds
             webView.autoresizingMask = [.width, .height]
             c.addSubview(webView)
         }
+        c.focusWhenAttached = focused
+        c.focusBrowserIfNeeded()
+    }
+}
+
+final class BrowserContainerView: NSView {
+    var focusWhenAttached = false
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        focusBrowserIfNeeded()
+    }
+
+    func focusBrowserIfNeeded() {
+        guard focusWhenAttached, let window, let browser = subviews.first as? FocusProtectedWebView else { return }
+        focusWhenAttached = false
+        guard window.firstResponder == nil || window.firstResponder === window else { return }
+        browser.requestKeyboardFocus()
     }
 }

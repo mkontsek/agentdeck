@@ -13,6 +13,15 @@ private struct SkillsLibraryView: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var library: SkillLibrary
     @State private var selected: LoadedSkill?
+    @State private var search = ""
+    @State private var directoryInput = ""
+    @State private var inputError: String?
+
+    private var filteredSkills: [LoadedSkill] {
+        library.skills.filter {
+            search.isEmpty || "\($0.name) \($0.summary) \($0.path)".localizedCaseInsensitiveContains(search)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -22,19 +31,32 @@ private struct SkillsLibraryView: View {
                 Button("Add folder…", action: addDirectory)
                 Button("Reload") { store.reloadSkills() }.disabled(library.isLoading)
             }
-            ForEach(store.settings.skillDirectories, id: \.self) { directory in
-                HStack {
-                    Image(systemName: "folder")
-                    Text(directory).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    Spacer()
-                    Button {
-                        store.settings.skillDirectories.removeAll { $0 == directory }
-                    } label: {
-                        Image(systemName: "minus.circle")
+            HStack {
+                TextField("Add a skills folder path, for example ~/gitrepos/agent-skills/skills", text: $directoryInput)
+                    .textFieldStyle(.roundedBorder).onSubmit(addDirectoryInput)
+                    .accessibilityIdentifier("skill-directory-input")
+                Button("Add", action: addDirectoryInput).disabled(
+                    directoryInput.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let inputError { Text(inputError).font(.caption).foregroundStyle(.red) }
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(store.settings.skillDirectories, id: \.self) { directory in
+                        HStack {
+                            Image(systemName: "folder")
+                            Text(directory).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            Spacer()
+                            Button {
+                                store.settings.skillDirectories.removeAll { $0 == directory }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless).help("Remove skill directory")
+                        }
                     }
-                    .buttonStyle(.borderless).help("Remove skill directory")
                 }
             }
+            .frame(maxHeight: 90)
             Text(
                 "Choose a skills folder or a repository containing .agents/skills. Enabled skills are shared with CLI agents; copy a skill to use it in a browser chat."
             )
@@ -42,8 +64,13 @@ private struct SkillsLibraryView: View {
             HStack {
                 Text("\(library.enabledSkills.count) of \(library.skills.count) skills enabled").font(.headline)
                 if library.isLoading { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Enable shown") { setShownSkills(enabled: true) }.disabled(filteredSkills.isEmpty)
+                Button("Disable shown") { setShownSkills(enabled: false) }.disabled(filteredSkills.isEmpty)
             }
-            List(library.skills) { skill in
+            TextField("Find a skill by name, description or path", text: $search).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("skill-search")
+            List(filteredSkills) { skill in
                 HStack(alignment: .top) {
                     Toggle(
                         "Enable \(skill.name)",
@@ -55,7 +82,7 @@ private struct SkillsLibraryView: View {
                                 store.settings.disabledSkillIDs = disabled
                             })
                     )
-                    .labelsHidden()
+                    .toggleStyle(.checkbox).labelsHidden().accessibilityIdentifier("skill-toggle-\(skill.name)")
                     VStack(alignment: .leading, spacing: 3) {
                         Text(skill.name).fontWeight(.medium)
                         Text(skill.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -65,6 +92,7 @@ private struct SkillsLibraryView: View {
                     Button("View") { selected = skill }
                 }.padding(.vertical, 3)
             }
+            .frame(minHeight: 160)
             if let warning = library.warnings.first {
                 Text(warning).font(.caption).foregroundStyle(.orange).lineLimit(2).help(
                     library.warnings.joined(separator: "\n"))
@@ -104,6 +132,33 @@ private struct SkillsLibraryView: View {
                 }
             }.padding(20).frame(width: 720, height: 540)
         }
+    }
+
+    private func setShownSkills(enabled: Bool) {
+        let shown = Set(filteredSkills.map(\.id))
+        var disabled = Set(store.settings.disabledSkillIDs)
+        if enabled { disabled.subtract(shown) } else { disabled.formUnion(shown) }
+        store.settings.disabledSkillIDs = disabled.sorted()
+    }
+
+    private func addDirectoryInput() {
+        let input = directoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        let path = URL(fileURLWithPath: input.expandingTilde).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            inputError = "Choose an existing skills folder."
+            return
+        }
+        guard path != "/", path != NSHomeDirectory() else {
+            inputError = "Choose a skills folder or repository, rather than the entire disk or home folder."
+            return
+        }
+        if !store.settings.skillDirectories.contains(where: { $0.expandingTilde == path }) {
+            store.settings.skillDirectories.append(path.abbreviatingHome)
+        }
+        directoryInput = ""
+        inputError = nil
     }
 
     private func addDirectory() {

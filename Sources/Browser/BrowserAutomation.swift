@@ -1,16 +1,20 @@
 import AppKit
 import Foundation
 
-/// browser_* MCP tools. Each CLI session drives only its own companion browser: a WebKit tab beside its terminal
-/// with an isolated website data store, so agents never touch the user's browser or each other's.
+/// browser_* MCP tools. Each CLI session drives only its own browser tabs inside its mini-window
+/// with shared AgentDeck sign-ins by default. Separate-account profiles remain available explicitly.
 extension AppStore {
     static let browserToolNames: Set<String> = [
         "browser_navigate", "browser_read", "browser_click", "browser_type", "browser_screenshot", "browser_eval",
     ]
 
-    func agentBrowser(for ownerID: UUID) -> ManagedSession? { sessions.first { $0.agentOwnerID == ownerID } }
+    func agentBrowser(for ownerID: UUID) -> ManagedSession? {
+        let owned = sessions.filter { $0.kind == .browser && $0.agentOwnerID == ownerID }
+        return owned.first { selectedBrowserTabs[ownerID] == $0.id }
+            ?? owned.first { selectedPaneTabs[$0.paneID] == $0.id } ?? owned.first
+    }
 
-    /// The caller's private browser, created on first use without stealing focus from its terminal.
+    /// The caller's own browser tab, created on first use without stealing focus from its terminal.
     func agentBrowserController(for ownerID: UUID) -> BrowserController? {
         guard let owner = session(ownerID), owner.kind == .cli else { return nil }
         let companion: ManagedSession
@@ -19,19 +23,17 @@ extension AppStore {
         } else {
             var s = ManagedSession(name: "\(owner.name) browser", kind: .browser)
             s.agentOwnerID = owner.id
-            s.browserProfileMode = .isolated
+            s.browserProfileMode = settings.shareAgentBrowserSignIns ? .shared : .isolated
             s.url = "about:blank"
-            s.paneID = owner.paneID
             s.paneSize = owner.paneSize
+            s.paneID = owner.paneID
             s.canvasPosition = owner.canvasPosition
             s.zIndex = owner.zIndex
             s.autoInjectContext = false
-            let focused = focusedSessionID
-            let selected = selectedPaneTabs[owner.paneID]
-            companion = addSession(s, start: true)
-            selectedPaneTabs[owner.paneID] = selected ?? owner.id
-            focusedSessionID = focused
-            addLog(source: owner.name, message: "opened private browser tab \"\(companion.name)\"")
+            companion = addSession(s, start: true, focus: false)
+            addLog(
+                source: owner.name,
+                message: "opened browser tab \"\(companion.name)\" (\(companion.browserProfileMode.label))")
         }
         if runtime[companion.id]?.isRunning != true { startSession(companion.id) }
         return browsers.controllers[companion.id]
@@ -50,7 +52,7 @@ extension AppStore {
         let int = { (d: String) -> [String: Any] in ["type": "integer", "description": d] }
         let wait = int("Settle time in ms after the action before reporting (default 500, max 10000)")
         let intro =
-            "Your private browser inside AgentDeck (isolated profile, shown as a tab beside your terminal; never the user's own browser). "
+            "Your browser tab inside AgentDeck; sign-ins are shared with other AgentDeck panes unless Separate account is selected. It never uses the user's external browser. "
         return [
             tool(
                 "browser_navigate",
@@ -58,21 +60,21 @@ extension AppStore {
                 ["url": str("http(s) URL"), "wait_ms": wait], required: ["url"]),
             tool(
                 "browser_read",
-                "Read the current page of your private browser: visible text (default), links (anchors with hrefs) or raw html.",
+                "Read the current page of your AgentDeck browser: visible text (default), links (anchors with hrefs) or raw html.",
                 [
                     "mode": str("text | links | html (default text)"),
                     "max_chars": int("Truncate output (default 20000)"),
                 ]),
             tool(
                 "browser_click",
-                "Click an element in your private browser by CSS selector or by visible text (buttons, links, menu items). Reports url and title afterwards.",
+                "Click an element in your AgentDeck browser by CSS selector or by visible text (buttons, links, menu items). Reports url and title afterwards.",
                 [
                     "selector": str("CSS selector"), "text": str("Visible text to match (exact first, then substring)"),
                     "wait_ms": wait,
                 ]),
             tool(
                 "browser_type",
-                "Type into a field of your private browser (CSS selector, else the focused or first visible input). Replaces the current value; optionally presses Enter.",
+                "Type into a field of your AgentDeck browser (CSS selector, else the focused or first visible input). Replaces the current value; optionally presses Enter.",
                 [
                     "text": str("Text to enter"), "selector": str("CSS selector of the field"),
                     "submit": ["type": "boolean", "description": "Press Enter / submit the form afterwards"],
@@ -80,9 +82,10 @@ extension AppStore {
                 ], required: ["text"]),
             tool(
                 "browser_screenshot",
-                "PNG screenshot of your private browser's current page. Needs the AgentDeck window on screen.", [:]),
+                "PNG screenshot of your AgentDeck browser's current page. Needs the AgentDeck window on screen.", [:]),
             tool(
-                "browser_eval", "Run JavaScript in your private browser's page and return the result as text or JSON.",
+                "browser_eval",
+                "Run JavaScript in your AgentDeck browser's page and return the result as text or JSON.",
                 ["script": str("JavaScript expression or IIFE")], required: ["script"]),
         ]
     }

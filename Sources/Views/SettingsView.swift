@@ -13,7 +13,7 @@ struct SettingsView: View {
             ProfilesSettings().tabItem { Label("CLI Profiles", systemImage: "terminal") }
             SkillsSettingsView().tabItem { Label("Skills", systemImage: "books.vertical") }
         }
-        .frame(width: 640, height: 520)
+        .frame(width: 780, height: 620)
     }
 }
 
@@ -37,9 +37,14 @@ private struct GeneralSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Browser sign-ins") {
+                Toggle("New agent browsers share AgentDeck sign-ins", isOn: $store.settings.shareAgentBrowserSignIns)
                 Text("Browser panes share AgentDeck’s saved sign-ins by default, including after restarting the app.")
                 Text(
                     "Sign in once per service. Signing out affects other shared panes for that service. Choose Separate account in a pane’s inspector for an independent login."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "Login cookies and website storage stay in a persistent local WebKit profile under your macOS account. AgentDeck does not save your account password. Websites can still expire or revoke a session."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -60,6 +65,14 @@ private struct GeneralSettings: View {
                 }.pickerStyle(.segmented)
                 Text("Terminal panes and embedded web pages follow the theme. ⌥⌘D flips between light and dark.")
                     .font(.caption).foregroundStyle(.secondary)
+                ColorPicker(
+                    "Canvas arrows",
+                    selection: Binding(
+                        get: { CanvasArrowColor.color(hex: store.settings.arrowColorHex) },
+                        set: { store.settings.arrowColorHex = CanvasArrowColor.hex(color: $0) }),
+                    supportsOpacity: false)
+                Text("Arrow color is independent of the focused window border. Dashed arrows identify browsers.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Panes") {
                 Picker("Layout", selection: $store.settings.layoutMode) {
@@ -72,7 +85,7 @@ private struct GeneralSettings: View {
                     }
                 }
                 Text(
-                    "Canvas layout turns panes into movable mini-windows: drag the header to move, the corner grip to resize (double-click resets), ⌥⌘T tidies them."
+                    "Drag the bottom-right grip to resize (double-click it to reset). Resizing a grid pane switches to Canvas. In Canvas, drag the header to move; ⌥⌘T tidies panes."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -115,8 +128,20 @@ private struct OrchestrationSettings: View {
                 .font(.caption).foregroundStyle(.secondary)
             }
             Section("Briefing and context") {
+                Toggle(
+                    "Automatically delegate substantial tasks to subagents", isOn: $store.settings.automaticSubagents)
+                Stepper(
+                    "Concurrent workers per conversation: \(store.settings.maximumConcurrentSubagents)",
+                    value: $store.settings.maximumConcurrentSubagents, in: SubagentLimits.concurrentWorkers)
                 Text(
-                    "Each CLI session gets its briefing (identity, tools, board, skills) as a file. Profiles whose command uses {briefingPath} load it silently as a system prompt; other profiles are typed one short line pointing at the file. Status summaries are never broadcast automatically. Send one to a session with Session › Inject Context Now, the pane menu, or the inspector."
+                    "Workers open in their own movable mini-windows, connected to the main conversation. Each worker's browser tabs have a separate connected window. Workers cannot spawn more workers; completion approval stays unchanged."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+                Toggle("Approve agent handoffs before delivery", isOn: $store.settings.approveAgentHandoffs)
+                Text("Review the exact shared package in the Work board. Completion approval is controlled per task.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "Built-in agents retain AgentDeck instructions across conversation resets. Claude, Codex and Grok receive launch instructions; Gemini and Antigravity load a persistent rule that reads their session briefing. Restart existing CLI processes after upgrading. Custom profiles can use briefing placeholders; otherwise they receive a one-time pointer. Send updated board context with Session › Inject Context Now."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -138,72 +163,5 @@ private struct OrchestrationSettings: View {
         }
         .formStyle(.grouped)
         .onAppear { port = store.settings.mcpPort }
-    }
-}
-
-private struct ProfilesSettings: View {
-    @EnvironmentObject var store: AppStore
-    @State private var selected: String?
-
-    var body: some View {
-        HSplitView {
-            VStack(spacing: 0) {
-                List(store.cliProfiles, selection: $selected) { p in Text(p.name).tag(p.id) }
-                Divider()
-                HStack {
-                    Button {
-                        add()
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    Button {
-                        remove()
-                    } label: {
-                        Image(systemName: "minus")
-                    }.disabled(selected == nil)
-                    Spacer()
-                }.buttonStyle(.borderless).padding(6)
-            }
-            .frame(width: 180)
-            if let i = store.cliProfiles.firstIndex(where: { $0.id == selected }) {
-                Form {
-                    TextField("Name", text: $store.cliProfiles[i].name)
-                    TextField("Id", text: $store.cliProfiles[i].id)
-                    LabeledContent("Command") {
-                        TextEditor(text: $store.cliProfiles[i].command).font(.system(.body, design: .monospaced)).frame(
-                            height: 60)
-                    }
-                    LabeledContent("Resume command") {
-                        TextEditor(text: $store.cliProfiles[i].resumeCommand.unwrap(""))
-                            .font(.system(.body, design: .monospaced)).frame(height: 60)
-                    }
-                    Text(
-                        "zsh snippets. Placeholders: {mcpUrl} {mcpConfigPath} {briefingPath} {sessionId} {sessionName} {cwd}. Env: AGENTDECK_SESSION_ID, AGENTDECK_SESSION_NAME, AGENTDECK_MCP_URL, AGENTDECK_MCP_CONFIG, AGENTDECK_BRIEFING. The resume command runs instead of the command when a session continues its last conversation; leave it empty to always start fresh."
-                    )
-                    .font(.caption).foregroundStyle(.secondary)
-                    Stepper(
-                        "Submit delay: \(store.cliProfiles[i].submitDelayMs) ms",
-                        value: $store.cliProfiles[i].submitDelayMs, in: 0...2000, step: 50)
-                    Toggle("Speaks MCP (receives briefings & summaries)", isOn: $store.cliProfiles[i].supportsMCP)
-                    LabeledContent("Notes") { TextEditor(text: $store.cliProfiles[i].notes).frame(height: 50) }
-                }
-                .formStyle(.grouped)
-            } else {
-                ContentUnavailableView("Select a profile", systemImage: "terminal")
-            }
-        }
-        .onAppear { selected = store.cliProfiles.first?.id }
-    }
-
-    private func add() {
-        let p = CLIProfile(
-            id: "custom-\(store.cliProfiles.count + 1)", name: "Custom CLI", command: "my-agent --mcp {mcpUrl}")
-        store.cliProfiles.append(p)
-        selected = p.id
-    }
-
-    private func remove() {
-        store.cliProfiles.removeAll { $0.id == selected }
-        selected = store.cliProfiles.first?.id
     }
 }

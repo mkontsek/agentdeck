@@ -91,7 +91,7 @@ final class AppStoreTests: XCTestCase {
             XCTAssertEqual(store.tasks.first?.ownerSessionID, session.id)
             XCTAssertFalse(
                 store.callTool(name: "update_task", args: ["task_id": 1, "status": "done"], caller: session.id).isError)
-            XCTAssertEqual(store.tasks.first?.status, .done)
+            XCTAssertEqual(store.tasks.first?.status, .awaitingApproval)
             XCTAssertTrue(store.callTool(name: "recruit_session", args: ["name": "Other"], caller: session.id).isError)
         }
     }

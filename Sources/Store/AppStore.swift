@@ -9,28 +9,34 @@ final class AppStore: ObservableObject {
     @Published var sessions: [ManagedSession] = []
     @Published var runtime: [UUID: SessionRuntime] = [:]
     @Published var tasks: [BoardTask] = []
+    @Published var handoffs: [TaskHandoff] = []
+    @Published var selectedTaskID: Int?
     @Published var log: [LogEntry] = []
     @Published var settings = AppSettings() {
         didSet {
             guard loaded else { return }
             applyFonts()
             if oldValue.appearance != settings.appearance { applyAppearance() }
-            if oldValue.skillDirectories != settings.skillDirectories
-                || oldValue.disabledSkillIDs != settings.disabledSkillIDs
-            {
+            if oldValue.skillDirectories != settings.skillDirectories {
                 reloadSkills()
+            } else if oldValue.disabledSkillIDs != settings.disabledSkillIDs {
+                skillLibrary.setDisabledIDs(settings.disabledSkillIDs, catalogURL: skillsCatalogURL)
             }
             scheduleSave()
         }
     }
     @Published var cliProfiles: [CLIProfile] = CLIProfile.builtins { didSet { if loaded { scheduleSave() } } }
+    @Published var selectedBrowserTabs: [UUID: UUID] = [:]
+    @Published var isDemoMode = false
     @Published var selectedPaneTabs: [UUID: UUID] = [:]
+    @Published var expandedSubagentTabs: [UUID: UUID] = [:]
     @Published var finishedSessionIDs: Set<UUID> = []
     @Published var focusedSessionID: UUID? {
         didSet {
             guard loaded else { return }
             if let id = focusedSessionID, let session = session(id) {
                 selectedPaneTabs[session.paneID] = id
+                if let owner = session.agentOwnerID { selectedBrowserTabs[owner] = id }
                 if maximizedSessionID != nil { maximizedSessionID = id }
                 raisePane(id)
                 if isAppActive {
@@ -40,7 +46,9 @@ final class AppStore: ObservableObject {
             scheduleSave()
         }
     }
-    @Published var maximizedSessionID: UUID?
+    @Published var maximizedSessionID: UUID? { didSet { if loaded { applyFonts() } } }
+    var startupPaneFitPending = false
+    @Published var paneRevealRevision = 0
     @Published var canvasViewport: CGSize = .zero
     @Published var recruits: [RecruitRequest] = []
     @Published var mcpStatus: String = "stopped"
@@ -48,11 +56,15 @@ final class AppStore: ObservableObject {
     @Published var showInjectSheet = false
     @Published var lastError: String?
 
-    private(set) var nextTaskID = 1
+    var nextTaskID = 1
     let terminals = TerminalHost()
     let browsers = BrowserHost()
     let skillLibrary = SkillLibrary()
+    let usageMonitor: CLIUsageMonitor
     private var bootstrapTask: Task<Void, Never>?
+    var resumeTrackingTask: Task<Void, Never>?
+    var resumeCheckpoints: [UUID: SessionResumeCheckpoint] = [:]
+    var resumeCaptureInProgress = false
     private var bootstrapped = false
     private var mcp: MCPServer?
     private var saveTask: Task<Void, Never>?
@@ -60,10 +72,14 @@ final class AppStore: ObservableObject {
     /// Last PTY output per session. Deliberately not published: output arrives many times per keystroke and must
     /// not re-render the whole window; `statusTick` folds it into `runtime` once a second.
     private var outputTimes: [UUID: Date] = [:]
+    var pendingTerminalMetadata: [UUID: PendingTerminalMetadata] = [:]
+    var terminalMetadataFlushTask: Task<Void, Never>?
     private var loaded = false
-    private var pendingInjections: [UUID: [String]] = [:]
+    let inbox: CoordinationInbox
     private var appearanceObserver: NSKeyValueObservation?
     private let storageURL: URL
+    private let instructionHome: URL
+    var resumeDirectory: URL { storageURL.deletingLastPathComponent().appendingPathComponent("resume") }
     private var canSave = true
     private var approvingRecruits: Set<UUID> = []
 
@@ -75,11 +91,20 @@ final class AppStore: ObservableObject {
     }()
     static var stateURL: URL { supportDir.appendingPathComponent("state.json") }
 
-    init(stateURL: URL? = nil) {
+    init(stateURL: URL? = nil, usageMonitor: CLIUsageMonitor? = nil) {
+        self.usageMonitor = usageMonitor ?? CLIUsageMonitor()
         storageURL = stateURL ?? Self.stateURL
+        inbox = CoordinationInbox(
+            url: storageURL.deletingLastPathComponent().appendingPathComponent("coordination-inbox.json"))
+        // An isolated store must never change the user's provider instructions.
+        instructionHome =
+            stateURL?.deletingLastPathComponent().appendingPathComponent("provider-home")
+            ?? FileManager.default.homeDirectoryForCurrentUser
         load()
+        if let error = inbox.loadError { lastError = error }
         wireHosts()
         loaded = true
+        recoverCoordinationNotifications()
     }
 
     // MARK: Lifecycle
@@ -87,6 +112,7 @@ final class AppStore: ObservableObject {
     func bootstrap() {
         guard !bootstrapped else { return }
         bootstrapped = true
+        prepareStartupLayout()
         applyAppearance()
         appearanceObserver = (NSApp as NSApplication?)?.observe(\.effectiveAppearance, options: [.new]) {
             [weak self] _, _ in
@@ -99,6 +125,7 @@ final class AppStore: ObservableObject {
             await skillLibrary.waitUntilLoaded()
             guard !Task.isCancelled else { return }
             if settings.openDefaultsWhenEmpty { openDefaultSessions(start: false) }
+            fitStartupCanvasIfNeeded()
             for session in sessions where session.autoStart { startSession(session.id) }
         }
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -108,7 +135,10 @@ final class AppStore: ObservableObject {
     }
 
     func shutdown() {
+        cancelTerminalMetadata()
         bootstrapTask?.cancel()
+        resumeTrackingTask?.cancel()
+        resumeTrackingTask = nil
         skillLibrary.stop()
         bootstrapped = false
         statusTimer?.invalidate()
@@ -157,9 +187,22 @@ final class AppStore: ObservableObject {
         }
         sessions = SessionOrdering.ordered(st.sessions)
         tasks = st.tasks
+        handoffs = st.handoffs.map { saved in
+            var handoff = saved
+            if handoff.status == .delivering {
+                handoff.status = .failed
+                handoff.detail = "Delivery was interrupted. Review and retry."
+            }
+            return handoff
+        }
         nextTaskID = max(st.nextTaskID, (tasks.map(\.id).max() ?? 0) + 1)
         log = Array(st.log.suffix(500))
         settings = st.settings
+        if !st.sharedAgentBrowserProfilesApplied && settings.shareAgentBrowserSignIns {
+            for index in sessions.indices where sessions[index].agentOwnerID != nil {
+                sessions[index].browserProfileMode = .shared
+            }
+        }
         cliProfiles = st.cliProfiles.isEmpty ? CLIProfile.builtins : st.cliProfiles
         if !st.unrestrictedCLIDefaultsApplied {
             cliProfiles = cliProfiles.map { $0.migratingUnrestrictedDefault() }
@@ -167,10 +210,19 @@ final class AppStore: ObservableObject {
         cliProfiles = cliProfiles.map { $0.adoptingBriefingAndResumeDefaults() }
         // Make sure new built-in profiles show up for users with an older profile list.
         for b in CLIProfile.builtins where !cliProfiles.contains(where: { $0.id == b.id }) { cliProfiles.append(b) }
+        selectedBrowserTabs = st.selectedBrowserTabs
         selectedPaneTabs = st.selectedPaneTabs
         focusedSessionID = session(st.focusedSessionID)?.id
-        if let focused = session(focusedSessionID) { selectedPaneTabs[focused.paneID] = focused.id }
-        for s in sessions { runtime[s.id] = SessionRuntime(status: .exited) }
+        expandedSubagentTabs = st.expandedSubagentTabs
+        separateConnectedPanes()
+        if let focused = session(focusedSessionID) {
+            selectedPaneTabs[focused.paneID] = focused.id
+        }
+        for s in sessions {
+            runtime[s.id] = SessionRuntime(status: .exited)
+            resumeCheckpoints[s.id] = ResumeCheckpointStorage.read(id: s.id, directory: resumeDirectory)
+        }
+        restoreOrphanedSubagents()
     }
 
     func scheduleSave() {
@@ -187,12 +239,15 @@ final class AppStore: ObservableObject {
         var st = PersistedState()
         st.sessions = sessions
         st.tasks = tasks
+        st.handoffs = handoffs
         st.nextTaskID = nextTaskID
         st.log = Array(log.suffix(500))
         st.settings = settings
         st.cliProfiles = cliProfiles
         st.focusedSessionID = focusedSessionID
+        st.selectedBrowserTabs = selectedBrowserTabs
         st.selectedPaneTabs = selectedPaneTabs
+        st.expandedSubagentTabs = expandedSubagentTabs
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -213,21 +268,24 @@ final class AppStore: ObservableObject {
         }
         terminals.onExit = { [weak self] id, code in
             guard let self else { return }
+            self.flushTerminalMetadata()
             self.runtime[id]?.isRunning = false
             self.runtime[id]?.exitCode = code
             self.setStatus(id, (code ?? 0) == 0 ? .exited : .error)
+            self.subagentStopped(id, reason: "process exited (code \(code.map(String.init) ?? "signal"))")
             self.addLog(
                 source: self.name(of: id), message: "process exited (code \(code.map(String.init) ?? "signal"))",
                 level: (code ?? 0) == 0 ? .info : .warn)
         }
-        terminals.onTitle = { [weak self] id, title in self?.runtime[id]?.title = title }
+        terminals.onTitle = { [weak self] id, title in
+            self?.queueTerminalMetadata(id, title: title)
+        }
         terminals.onFocus = { [weak self] id in
             guard let self, self.focusedSessionID != id else { return }
             self.focusedSessionID = id
         }
         terminals.onProgramStatus = { [weak self] id, state, message in
-            self?.runtime[id]?.programState = state
-            self?.runtime[id]?.programMessage = message
+            self?.queueTerminalMetadata(id, program: .init(state: state, message: message))
         }
         browsers.downloadDirectory = { [weak self] in
             DownloadLocation.directory(from: self?.settings.downloadDirectory ?? "")
@@ -250,6 +308,12 @@ final class AppStore: ObservableObject {
             self.runtime[id]?.title = c.title
             self.runtime[id]?.lastOutputAt = Date()
             self.setStatus(id, c.isLoading ? .working : .idle)
+            if !c.isLoading, let url = c.webView.url?.absoluteString,
+                let index = self.sessions.firstIndex(where: { $0.id == id }), self.sessions[index].url != url
+            {
+                self.sessions[index].url = url
+                self.scheduleSave()
+            }
         }
     }
 
@@ -281,34 +345,25 @@ final class AppStore: ObservableObject {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    func font(for session: ManagedSession) -> NSFont {
-        let size = session.fontSizeOverride ?? settings.globalFontSize
-        return NSFont(name: settings.fontName, size: size)
-            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-    }
-
-    func applyFonts() {
-        for s in sessions where s.kind == .cli { terminals.setFont(id: s.id, font(for: s)) }
-    }
-
     @discardableResult
-    func addSession(_ s: ManagedSession, start: Bool = true) -> ManagedSession {
+    func addSession(_ s: ManagedSession, start: Bool = true, focus: Bool = true) -> ManagedSession {
         var s = s
         if s.kind == .cli, let p = profile(for: s), !p.supportsMCP { s.autoInjectContext = false }
         sessions.append(s)
         sessions = SessionOrdering.ordered(sessions)
+        separateConnectedPanes()
         runtime[s.id] = SessionRuntime()
-        focusedSessionID = s.id
+        if focus { focusedSessionID = s.id }
         addLog(source: "app", message: "session \"\(s.name)\" added (\(s.kind.label))")
         if start { startSession(s.id) }
         scheduleSave()
-        return s
+        return session(s.id) ?? s
     }
 
     func updateSession(_ s: ManagedSession) {
         guard let i = sessions.firstIndex(where: { $0.id == s.id }) else { return }
         sessions[i] = s
-        if s.kind == .cli { terminals.setFont(id: s.id, font(for: s)) }
+        applyTextSize(to: s)
         scheduleSave()
     }
 
@@ -336,20 +391,52 @@ final class AppStore: ObservableObject {
     /// True when this launch should run the profile's resume command: the session asks for it, the profile has
     /// one, and the provider's storage shows a conversation for the directory (or cannot be inspected).
     func shouldResume(_ s: ManagedSession) -> Bool {
-        guard s.resumeLastConversation, let profile = profile(for: s), profile.canResume else { return false }
+        guard let profile = profile(for: s), profile.canResume else { return false }
+        if let checkpoint = resumeCheckpoint(for: s) {
+            guard s.resumeOnRestart else { return false }
+            if checkpoint.hasSavedConversation, profile.exactResumeCommand != nil { return true }
+            // Providers without exact process metadata can use their configured fallback only for a single pane.
+            guard !["claude", "codex", "grok"].contains(profile.id),
+                sessions.filter({ $0.kind == .cli && $0.cliProfileID == profile.id }).count <= 1,
+                profile.resumeCommand?.contains("{conversationId}") != true
+            else { return false }
+            return ResumeDetection.hasPriorConversation(profileID: profile.id, cwd: s.effectiveDirectory) ?? true
+        }
+        guard s.resumeLastConversation else { return false }
+        // Never point two managed panes at an unidentified directory-wide "latest" conversation.
+        guard
+            !sessions.contains(where: {
+                $0.id != s.id && $0.kind == .cli && $0.cliProfileID == s.cliProfileID
+                    && $0.effectiveDirectory.expandingTilde == s.effectiveDirectory.expandingTilde
+            })
+        else { return false }
         return ResumeDetection.hasPriorConversation(profileID: profile.id, cwd: s.effectiveDirectory) ?? true
     }
 
     func launchCommand(for s: ManagedSession, resume: Bool? = nil) -> String {
-        guard let profile = profile(for: s) else { return "" }
-        let template = (resume ?? shouldResume(s)) ? (profile.resumeCommand ?? profile.command) : profile.command
+        guard profile(for: s) != nil else { return "" }
+        let checkpoint = resumeCheckpoint(for: s)
+        let resuming = resume ?? shouldResume(s)
+        var template = launchTemplate(for: s, resume: resuming)
+        let prompt = resuming ? nil : initialMessage(for: s)
+        if prompt != nil, let startup = profile(for: s)?.initialPromptTemplate { template = startup }
         return CommandTemplate.expand(
             template,
             values: [
                 "mcpUrl": mcpURL(for: s.id), "mcpConfigPath": mcpConfigPath(for: s.id),
                 "briefingPath": briefingPath(for: s.id),
+                "briefing": briefingText(for: s),
+                "briefingConfig": "developer_instructions=" + BriefingInstructions.tomlString(briefingText(for: s)),
                 "sessionId": s.id.uuidString, "sessionName": s.name, "cwd": s.effectiveDirectory,
+                "conversationId": checkpoint?.conversationID ?? "", "initialPrompt": prompt ?? "",
             ])
+    }
+
+    func launchTemplate(for s: ManagedSession, resume: Bool? = nil) -> String {
+        guard let profile = profile(for: s) else { return "" }
+        guard resume ?? shouldResume(s) else { return profile.command }
+        let exact = resumeCheckpoint(for: s)?.hasSavedConversation == true ? profile.exactResumeCommand : nil
+        return exact ?? profile.resumeCommand ?? profile.command
     }
 
     /// The start-up briefing as a file, so a provider can take it as a system prompt instead of a typed message.
@@ -364,7 +451,7 @@ final class AppStore: ObservableObject {
         "[AgentDeck skills] Read the skill catalog at \(skillsCatalogURL.path) and load relevant SKILL.md instructions before working. MCP clients can also call list_skills and read_skill. Relative skill references resolve against the skill's own directory."
     }
 
-    private func writeBriefing(for s: ManagedSession) throws {
+    func writeBriefing(for s: ManagedSession) throws {
         let url = URL(fileURLWithPath: briefingPath(for: s.id))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(briefingText(for: s).utf8).write(to: url, options: .atomic)
@@ -396,6 +483,7 @@ final class AppStore: ObservableObject {
 
     func startSession(_ id: UUID) {
         guard let s = session(id), runtime[id]?.isRunning != true else { return }
+        pendingTerminalMetadata[id] = nil
         var rt = runtime[id] ?? SessionRuntime()
         rt.status = .starting
         rt.statusSince = Date()
@@ -405,6 +493,7 @@ final class AppStore: ObservableObject {
         rt.programState = nil
         rt.initialPromptSent = false
         rt.resumed = false
+        rt.restoredLaunch = resumeCheckpoint(for: s) != nil
         rt.lastOutputAt = nil
         outputTimes[id] = nil
         rt.programMessage = nil
@@ -427,20 +516,45 @@ final class AppStore: ObservableObject {
                 }
                 try writeMCPConfig(for: id)
                 if profile(for: s)?.supportsMCP == true { try writeBriefing(for: s) }
+                if profile(for: s)?.supportsMCP == true, profile(for: s)?.usesBriefingRuleBridge == true {
+                    try BriefingInstructions.installBridge(home: instructionHome)
+                }
                 try FileManager.default.createDirectory(atPath: cwd, withIntermediateDirectories: true)
             } catch {
                 runtime[id]?.isRunning = false
                 setStatus(id, .error)
                 lastError = "Session could not start: \(error.localizedDescription)"
+                subagentStopped(id, reason: error.localizedDescription)
                 return
             }
             let resume = shouldResume(s)
             runtime[id]?.resumed = resume
             let command = launchCommand(for: s, resume: resume)
+            // Unsupported custom startup channels stay in the inbox; never type into setup/login/composers.
+            if let message = initialMessage(for: s), profile(for: s)?.initialPromptTemplate == nil {
+                let key = "startup:\(id.uuidString)"
+                if !inbox.events.contains(where: { $0.targetID == id && $0.key == key }),
+                    queueCoordination(id, text: message, source: "startup", key: key) != nil
+                {
+                    addLog(
+                        source: s.name,
+                        message: "Initial task queued in inbox; configure {initialPrompt} for automatic launch.")
+                }
+            }
+            runtime[id]?.initialPromptSent = true
+            recordSessionLaunch(s, resuming: resume)
             terminals.start(id: id, command: command, cwd: cwd, environment: environment(for: s), font: font(for: s))
+            startResumeTracking()
             addLog(
                 source: s.name,
-                message: "\(resume ? "resumed" : "launched"): \(command) in \(cwd.abbreviatingHome)")
+                message: "\(resume ? "resumed" : "launched") \(s.cliProfileID ?? "CLI") in \(cwd.abbreviatingHome)")
+            if rt.restoredLaunch && s.resumeOnRestart && !resume && profile(for: s)?.canResume == true {
+                addLog(
+                    source: s.name,
+                    message:
+                        "The previous conversation could not be identified safely; opened a fresh session without replaying its initial task.",
+                    level: .warn)
+            }
         case .browser:
             _ = browsers.controller(for: s, sharedProfileID: settings.sharedBrowserProfileID)
             setStatus(id, .idle)
@@ -450,7 +564,6 @@ final class AppStore: ObservableObject {
 
     func restartSession(_ id: UUID) {
         guard let s = session(id) else { return }
-        pendingInjections[id] = nil
         switch s.kind {
         case .cli: terminals.dispose(id: id)
         case .browser: browsers.dispose(id: id)
@@ -461,7 +574,7 @@ final class AppStore: ObservableObject {
 
     func stopSession(_ id: UUID) {
         guard let s = session(id) else { return }
-        pendingInjections[id] = nil
+        pendingTerminalMetadata[id] = nil
         runtime[id]?.generation += 1
         runtime[id]?.isRunning = false
         setStatus(id, .exited)
@@ -476,11 +589,6 @@ final class AppStore: ObservableObject {
 
     func setBrowserProfileMode(_ mode: BrowserProfileMode, for id: UUID) {
         guard var session = session(id), session.kind == .browser, session.browserProfileMode != mode else { return }
-        // An agent's private browser is isolated by contract (README "Private browsers for agents").
-        guard session.agentOwnerID == nil else {
-            lastError = "An agent's private browser always uses its own isolated profile."
-            return
-        }
         let wasRunning = browsers.isRunning(id)
         session.browserProfileMode = mode
         updateSession(session)
@@ -506,6 +614,7 @@ final class AppStore: ObservableObject {
             }
             return
         }
+        subagentStopped(id, reason: "worker window closed")
         terminals.dispose(id: id)
         browsers.dispose(id: id)
         if deleteBrowserProfile, s.kind == .browser, s.browserProfileMode == .isolated,
@@ -516,23 +625,37 @@ final class AppStore: ObservableObject {
         }
         try? FileManager.default.removeItem(atPath: mcpConfigPath(for: id))
         try? FileManager.default.removeItem(atPath: briefingPath(for: id))
+        resumeCheckpoints[id] = nil
+        try? FileManager.default.removeItem(at: ResumeCheckpointStorage.url(for: id, directory: resumeDirectory))
         let tabs = pane(containing: id)?.tabs ?? []
         let index = tabs.firstIndex(where: { $0.id == id }) ?? 0
         let remaining = tabs.filter { $0.id != id }
         let replacement = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
         sessions.removeAll { $0.id == id }
+        selectedBrowserTabs = selectedBrowserTabs.filter { $0.key != id && $0.value != id }
+        expandedSubagentTabs = expandedSubagentTabs.filter { $0.key != id && $0.value != id }
+        // Keep child history/processes when a parent is closed; promote them to main conversations.
+        let orphanIDs = sessions.filter { $0.parentSessionID == id }.map(\.id)
+        for childID in orphanIDs { promoteToMainConversation(childID) }
+        for transfer in handoffs where transfer.targetSessionID == id && transfer.status.isOpen {
+            transitionHandoff(
+                transfer.id, to: .failed, detail: "Recipient session was removed. Cancel and choose another recipient.",
+                actor: "app")
+        }
         runtime[id] = nil
-        pendingInjections[id] = nil
         if selectedPaneTabs[s.paneID] == id { selectedPaneTabs[s.paneID] = replacement }
         if remaining.isEmpty { selectedPaneTabs[s.paneID] = nil }
         if maximizedSessionID == id { maximizedSessionID = replacement }
         if focusedSessionID == id { focusedSessionID = replacement ?? sessions.first?.id }
-        for i in tasks.indices where tasks[i].ownerSessionID == id { tasks[i].ownerSessionID = nil }
+        for var task in tasks where task.ownerSessionID == id {
+            task.ownerSessionID = nil
+            updateTask(task, by: "app")
+        }
         finishedSessionIDs.remove(id)
         updateDesktopNotification()
         addLog(source: "app", message: "session \"\(s.name)\" removed")
         scheduleSave()
-        // A CLI session's private browser goes with it, profile included.
+        // Remove only this owner's browser tabs; the shared sign-in profile always survives.
         for companion in sessions.filter({ $0.agentOwnerID == id }) {
             removeSession(companion.id, deleteBrowserProfile: true)
         }
@@ -642,32 +765,21 @@ final class AppStore: ObservableObject {
         settings.appearance = isDarkTheme ? .light : .dark
     }
 
-    // MARK: Font & size controls
-
-    func adjustFont(for id: UUID?, by delta: Double) {
-        guard let id, var s = session(id) else { return }
-        let base = s.fontSizeOverride ?? settings.globalFontSize
-        s.fontSizeOverride = min(40, max(8, base + delta))
-        updateSession(s)
-    }
-
-    func resetFont(for id: UUID?) {
-        guard let id, var s = session(id) else { return }
-        s.fontSizeOverride = nil
-        updateSession(s)
-    }
-
-    func setPaneSize(for id: UUID, _ size: PaneSize?) {
-        guard let s = session(id) else { return }
-        for index in sessions.indices where sessions[index].paneID == s.paneID { sessions[index].paneSize = size }
-        scheduleSave()
-    }
-
-    func paneSize(for s: ManagedSession) -> PaneSize { s.paneSize ?? settings.defaultPanePreset.size }
-
     // MARK: Canvas
 
     static let canvasSpacing = CanvasLayout.spacing
+
+    /// A mouse resize leaves automatic tiling without making any pane jump to an older canvas position.
+    func detachGridForResize(frames: [UUID: CGRect]) {
+        guard settings.layoutMode == .grid, maximizedSessionID == nil else { return }
+        for index in sessions.indices {
+            guard let frame = frames[sessions[index].paneID] else { continue }
+            sessions[index].canvasPosition = PanePoint(x: frame.minX, y: frame.minY)
+            sessions[index].paneSize = PaneSize(width: frame.width, height: frame.height)
+        }
+        settings.layoutMode = .canvas
+        scheduleSave()
+    }
 
     /// Bring a pane to the front of the canvas.
     func raisePane(_ id: UUID) {
@@ -747,55 +859,56 @@ final class AppStore: ObservableObject {
             session.paneSize = PaneSize(width: frame.width, height: frame.height)
             return session
         }
+        applyFonts()
+        paneRevealRevision += 1
         scheduleSave()
     }
 
     // MARK: Injection
 
-    /// Type `text` into a CLI session as if the user had typed it. Multi-line text is collapsed to one line.
-    func inject(_ id: UUID, text: String, submit: Bool = true, source: String = "user", queueIfBusy: Bool = false)
+    /// Explicit user input retains negotiated paste + delayed Enter (task60). All background callers use the inbox.
+    /// A background completion means durable acceptance, never submission or processing.
+    func inject(
+        _ id: UUID, text: String, submit: Bool = true, source: String = "user", queueIfBusy: Bool = false,
+        completion: ((Bool) -> Void)? = nil
+    )
         -> Bool
     {
-        guard let s = session(id), s.kind == .cli else { return false }
         if source != "user" || queueIfBusy {
-            guard profile(for: s)?.supportsMCP == true else { return false }
+            let accepted = queueCoordination(id, text: text, source: source) != nil
+            completion?(accepted)
+            return accepted
         }
+        // This branch is exclusively an explicit user action in the Send Input sheet.
+        guard let s = session(id), s.kind == .cli, runtime[id]?.isRunning == true else { return false }
         let line = text.singleLine
         guard !line.isEmpty else { return false }
-        guard runtime[id]?.isRunning == true else { return false }
-        if queueIfBusy, !(runtime[id]?.status.acceptsInjection ?? false) {
-            pendingInjections[id, default: []].append(line)
-            addLog(source: source, message: "queued message for \"\(s.name)\" (busy): \(line.prefix(80))")
-            return true
-        }
         let delay = Double(max(0, min(2000, profile(for: s)?.submitDelayMs ?? 150))) / 1000
         let generation = runtime[id]?.generation
         let terminal = terminals.view(for: id)
-        terminals.send(id: id, text: line)
+        terminals.paste(id: id, text: line)
         if submit {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak terminal] in
                 guard let self, let terminal, self.runtime[id]?.isRunning == true,
                     self.runtime[id]?.generation == generation, self.terminals.view(for: id) === terminal
-                else { return }
+                else {
+                    completion?(false)
+                    return
+                }
                 self.terminals.send(id: id, text: "\r")
+                completion?(true)
             }
         }
         runtime[id]?.lastOutputAt = Date()
         runtime[id]?.injectionReadyAt = Date().addingTimeInterval(max(delay, settings.idleAfterSeconds))
         setStatus(id, .working)
-        addLog(source: source, message: "→ \(s.name): \(line.prefix(120))")
+        addLog(source: source, message: "Explicit input sent to \(s.name) (\(line.count) characters)")
         return true
-    }
-
-    private func flushPending(_ id: UUID) {
-        guard let q = pendingInjections[id], !q.isEmpty, runtime[id]?.status.acceptsInjection == true else { return }
-        pendingInjections[id] = nil
-        _ = inject(id, text: q.joined(separator: " || "), source: "queue")
     }
 
     // MARK: Status monitoring
 
-    private func statusTick() {
+    func statusTick() {
         let now = Date()
         for s in sessions where s.kind == .cli {
             guard var rt = runtime[s.id], rt.isRunning else { continue }
@@ -814,39 +927,36 @@ final class AppStore: ObservableObject {
             if let c = stats.context { rt.contextInfo = c }
             if rt != runtime[s.id] { runtime[s.id] = rt }
             setStatus(s.id, st)
-            if st == .idle {
-                flushPending(s.id)
-                deliverFirstMessageIfNeeded(s)
-            }
         }
         updateDesktopNotification()
     }
 
-    /// The briefing itself lives in a file (see `briefingText`). Providers whose command takes `{briefingPath}`
-    /// get it as a system prompt and nothing is typed; others get one short pointer line. A resumed conversation
-    /// already saw its briefing and first prompt, so nothing is typed at all.
-    private func deliverFirstMessageIfNeeded(_ s: ManagedSession) {
-        guard var rt = runtime[s.id], rt.status.acceptsInjection, !rt.initialPromptSent else { return }
-        rt.initialPromptSent = true
-        runtime[s.id] = rt
-        guard !rt.resumed, let profile = profile(for: s) else { return }
+    func initialMessage(for s: ManagedSession) -> String? {
+        guard let rt = runtime[s.id], !rt.resumed, let profile = profile(for: s) else { return nil }
         var parts: [String] = []
-        let pointer = profile.supportsMCP && !profile.deliversBriefingInCommand
+        let pointer = needsBriefingPointer(s, profile: profile)
         if pointer { parts.append("[AgentDeck] Read your briefing at \(briefingPath(for: s.id)) before working.") }
-        if let p = s.initialPrompt?.singleLine, !p.isEmpty { parts.append(pointer ? "Your first task: \(p)" : p) }
-        guard !parts.isEmpty else { return }
-        _ = inject(s.id, text: parts.joined(separator: " "), source: pointer ? "context" : "user")
+        if !rt.restoredLaunch, let p = s.initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
+            parts.append(pointer ? "Your first task: \(p)" : p)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    private func needsBriefingPointer(_ s: ManagedSession, profile: CLIProfile) -> Bool {
+        profile.supportsMCP && !profile.usesBriefingRuleBridge
+            && !CLIProfile.includesBriefing(launchTemplate(for: s, resume: runtime[s.id]?.resumed ?? false))
     }
 
     // MARK: Context awareness
 
     func briefing(for s: ManagedSession) -> String {
         let role =
-            s.isOrchestrator
-            ? "You are the Orchestrator: you may also call recruit_session (user approves) and assign work." : ""
+            subagentBriefing(for: s)
+            + (s.isOrchestrator
+                ? " You are the Orchestrator: you may also call recruit_session (user approves) and assign work." : "")
         return
-            "[AgentDeck] You are managed session \"\(s.name)\" (\(profile(for: s)?.name ?? "CLI")) in \(s.effectiveDirectory.abbreviatingHome). Other agents run in sibling sessions. Coordinate only through the agentdeck MCP tools: list_sessions, read_board, create_task, update_task, handoff, send_message, log. Claim a task with update_task(owner=me, status=in-progress) before working on it and mark it done when finished. For anything on the web use your private AgentDeck browser (browser_navigate, browser_read, browser_click, browser_type, browser_screenshot, browser_eval) and never the user's own browser. \(role)"
-            .singleLine
+            "[AgentDeck] You are managed session \"\(s.name)\" (\(profile(for: s)?.name ?? "CLI")) in \(s.effectiveDirectory.abbreviatingHome). Other agents run in sibling sessions. Coordinate only through the agentdeck MCP tools: list_sessions, read_board, create_task, update_task, handoff, send_message, log. Claim a task with update_task(owner=me, status=in-progress) before working on it and mark it done when finished. For anything on the web use your AgentDeck browser (sign-ins are shared by default) (browser_navigate, browser_read, browser_click, browser_type, browser_screenshot, browser_eval) and never the user's external browser. \(role)"
+            .singleLine + " " + Self.inboxInstructions
     }
 
     func contextSummary(for target: ManagedSession) -> String {
@@ -863,7 +973,8 @@ final class AppStore: ObservableObject {
         let mine = open.filter { $0.ownerSessionID == target.id }.map { "#\($0.id)" }.joined(separator: ", ")
         var out = "[AgentDeck status] Sessions: \(sess). Open tasks: \(open.count)" + (tl.isEmpty ? "." : " — \(tl).")
         if !mine.isEmpty { out += " Assigned to you: \(mine)." }
-        out += " Use read_board / update_task / handoff to coordinate."
+        out +=
+            " Use read_board / update_task / handoff to coordinate. Handoffs require explicit acceptance with accept_handoff; read_handoffs provides published context. New tasks require user approval for completion: marking done requests approval."
         return out
     }
 
@@ -872,82 +983,6 @@ final class AppStore: ObservableObject {
     func injectContextNow(_ id: UUID) {
         guard let s = session(id) else { return }
         _ = inject(id, text: contextSummary(for: s), source: "context", queueIfBusy: true)
-    }
-
-    // MARK: Task board
-
-    @discardableResult
-    func createTask(
-        title: String, description: String = "", owner: UUID? = nil, status: TaskStatus = .todo,
-        notes: String = "", createdBy: String = "user"
-    ) -> BoardTask {
-        let t = BoardTask(
-            id: nextTaskID, title: title, description: description, ownerSessionID: owner,
-            status: status, notes: notes, createdBy: createdBy)
-        nextTaskID += 1
-        tasks.append(t)
-        addLog(source: createdBy, message: "task #\(t.id) created: \(title)")
-        scheduleSave()
-        return t
-    }
-
-    func updateTask(_ t: BoardTask, by source: String = "user") {
-        guard let i = tasks.firstIndex(where: { $0.id == t.id }) else { return }
-        var n = t
-        n.updatedAt = Date()
-        let old = tasks[i]
-        tasks[i] = n
-        if old.status != n.status { addLog(source: source, message: "task #\(n.id) → \(n.status.label)") }
-        if old.ownerSessionID != n.ownerSessionID {
-            addLog(source: source, message: "task #\(n.id) owner → \(n.ownerSessionID.map(name(of:)) ?? "unassigned")")
-        }
-        scheduleSave()
-    }
-
-    func deleteTask(_ id: Int) {
-        tasks.removeAll { $0.id == id }
-        scheduleSave()
-    }
-
-    // MARK: Handoff
-
-    enum HandoffError: Error, LocalizedError {
-        case noTask
-        var errorDescription: String? { "handoff needs task_id or title" }
-    }
-
-    @discardableResult
-    func handoff(
-        from caller: UUID?, to target: ManagedSession, taskID: Int?, title: String?, description: String?,
-        note: String?
-    ) throws -> (task: BoardTask, delivered: Bool) {
-        let source = caller.map(name(of:)) ?? "user"
-        var task: BoardTask
-        if let taskID, let existing = tasks.first(where: { $0.id == taskID }) {
-            task = existing
-            task.ownerSessionID = target.id
-            if task.status == .done { task.status = .todo }
-            if let d = description, !d.isEmpty { task.description = d }
-            if let note, !note.isEmpty { task.notes += (task.notes.isEmpty ? "" : "\n") + "[\(source)] \(note)" }
-            updateTask(task, by: source)
-        } else if let title, !title.isEmpty {
-            task = createTask(
-                title: title, description: description ?? "", owner: target.id,
-                notes: note.map { "[\(source)] \($0)" } ?? "", createdBy: source)
-        } else {
-            throw HandoffError.noTask
-        }
-        addLog(source: source, message: "handoff task #\(task.id) → \(target.name)")
-        var msg = "[AgentDeck handoff from \(source)] Task #\(task.id): \(task.title)."
-        if !task.description.isEmpty { msg += " \(task.description)" }
-        if let note, !note.isEmpty { msg += " Note: \(note)" }
-        msg += " Please take it: update_task(task_id=\(task.id), status=in-progress, owner=me), then mark it done."
-        var delivered = false
-        if target.kind == .cli {
-            let idle = runtime[target.id]?.status.acceptsInjection == true
-            delivered = inject(target.id, text: msg, source: source, queueIfBusy: true) && idle
-        }
-        return (task, delivered)
     }
 
     // MARK: Recruits

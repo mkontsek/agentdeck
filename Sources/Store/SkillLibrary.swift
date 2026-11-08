@@ -11,6 +11,14 @@ final class SkillLibrary: ObservableObject {
 
     var enabledSkills: [LoadedSkill] { skills.filter { !disabledIDs.contains($0.id) } }
 
+    func setDisabledIDs(_ ids: [String], catalogURL: URL) {
+        objectWillChange.send()
+        disabledIDs = Set(ids)
+        do { try writeCatalog(to: catalogURL) } catch {
+            warnings.append("Skill catalog could not be written: \(error.localizedDescription)")
+        }
+    }
+
     func reload(directories: [String], disabledIDs: [String], catalogURL: URL) {
         reloadTask?.cancel()
         self.disabledIDs = Set(disabledIDs)

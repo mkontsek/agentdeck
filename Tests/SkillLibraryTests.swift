@@ -98,6 +98,12 @@ final class SkillLibraryTests: XCTestCase {
         store.settings.disabledSkillIDs = [hidden.path]
         await store.skillLibrary.waitUntilLoaded()
         XCTAssertEqual(store.skillLibrary.enabledSkills.map(\.path), [skill.path])
+        let scanned = store.skillLibrary.skills.map(\.id)
+        store.settings.disabledSkillIDs = [skill.path]
+        XCTAssertFalse(store.skillLibrary.isLoading)
+        XCTAssertEqual(store.skillLibrary.skills.map(\.id), scanned)
+        XCTAssertEqual(store.skillLibrary.enabledSkills.map(\.path), [hidden.path])
+        store.settings.disabledSkillIDs = [hidden.path]
         let catalog = try String(contentsOf: store.skillsCatalogURL, encoding: .utf8)
         XCTAssertTrue(catalog.contains(skill.path))
         XCTAssertFalse(catalog.contains(hidden.path))

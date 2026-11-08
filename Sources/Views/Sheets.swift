@@ -55,8 +55,10 @@ struct NewSessionSheet: View {
                         Toggle("Orchestrator (can recruit sessions with your approval)", isOn: $orchestrator)
                             .padding(.leading, 116)
                         Toggle("Include status summary in start-up briefing", isOn: $autoInject).padding(.leading, 116)
-                        Toggle("Continue the directory's last conversation when one exists", isOn: $resumeLast)
+                        Toggle("Use the directory's latest conversation for the first launch", isOn: $resumeLast)
                             .padding(.leading, 116)
+                        Text("After restart, this pane resumes its own saved conversation when supported.")
+                            .font(.caption).foregroundStyle(.secondary).padding(.leading, 116)
                     } else {
                         field("Site") {
                             Picker("Site", selection: $preset) {
