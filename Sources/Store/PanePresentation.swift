@@ -1,10 +1,12 @@
 import AppKit
 
 extension AppStore {
-    /// Called once by bootstrap. Wait for both the restored/default sessions and a measured viewport.
+    /// Only an initially empty workspace needs an overview. Saved geometry is independent of the viewport.
     func prepareStartupLayout() {
         settings.workspaceMode = .sessions
-        startupPaneFitPending = true
+        startupPaneFitPending = sessions.isEmpty
+        // New saves snapshot grid frames; legacy saves retain their last stored canvas geometry.
+        if !sessions.isEmpty { settings.layoutMode = .canvas }
         fitStartupCanvasIfNeeded()
     }
 
@@ -23,6 +25,24 @@ extension AppStore {
         fitStartupCanvasIfNeeded()
         ensureCanvasPositions(viewportWidth: size.width)
         applyFonts()
+    }
+
+    /// Freeze the displayed grid into the existing canvas fields, without changing the running workspace.
+    /// A temporary maximized view must not replace the underlying mini-window sizes.
+    func snapshotPaneLayout(into state: inout PersistedState) {
+        guard settings.layoutMode == .grid,
+            canvasViewport.width.isFinite, canvasViewport.height.isFinite,
+            canvasViewport.width > 0, canvasViewport.height > 0
+        else { return }
+        let frames = paneFrames(in: canvasViewport, includingMaximized: false)
+        state.sessions = state.sessions.map { session in
+            guard let frame = frames[session.paneID] else { return session }
+            var session = session
+            session.canvasPosition = PanePoint(x: frame.minX, y: frame.minY)
+            session.paneSize = PaneSize(width: frame.width, height: frame.height)
+            return session
+        }
+        state.settings.layoutMode = .canvas
     }
 
     func displayedPaneSize(for session: ManagedSession) -> PaneSize {
@@ -115,7 +135,7 @@ extension AppStore {
             height: max(220, floor((area.height - 16 - 8 * Double(rows - 1)) / Double(rows))))
     }
 
-    func paneFrames(in area: CGSize) -> [UUID: CGRect] {
+    func paneFrames(in area: CGSize, includingMaximized: Bool = true) -> [UUID: CGRect] {
         let panes = panes
         let spacing = 8.0
         let count = max(1, panes.count)
@@ -124,7 +144,9 @@ extension AppStore {
         let size = gridPaneSize(in: area)
         return Dictionary(
             uniqueKeysWithValues: panes.enumerated().map { index, pane in
-                if let maximized = maximizedSessionID, pane.tabs.contains(where: { $0.id == maximized }) {
+                if includingMaximized, let maximized = maximizedSessionID,
+                    pane.tabs.contains(where: { $0.id == maximized })
+                {
                     return (
                         pane.id,
                         CGRect(origin: .zero, size: area)

@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-11-09: Preserve mini-window geometry across restart
+
+The user wants saved sizes and positions retained even when the next canvas has different dimensions. This supersedes the November 7 decision to fit every window at every startup. Fit only an initially empty workspace's first windows; restored panes keep their stored geometry and off-screen panes remain reachable by scrolling. Explicit Fill Canvas, Tidy and Grid still rearrange the workspace when requested.
+
+Snapshot a measured grid's normal frames into the existing persisted canvas fields and reopen it as a fixed canvas. Do this on the saved value copy so neither a save nor a temporary maximize changes the live grid. Reusing these fields avoids a second layout schema or a viewport-dependent reconstruction. Older grid saves did not record the displayed frames; retain the canvas geometry they contain. Provider sessions, native hosts, draft handling and coordination delivery are unchanged.
+
 ## 2026-11-08: Preserve native focus before responder transfer; route visible connectors
 
 Native tests reproduced WebKit asking NSWindow for focus, causing AppKit to resign a terminal before WKWebView rejected the request. Restoring focus afterward would already have disturbed typing/IME. A narrow, one-time public-method interception checks owned browser targets before resignation; ordinary AppKit responders pass through. Explicit user pane selection and actual pointer/Tab dispatch grant focus synchronously. Passive mounts may only fill an unclaimed responder chain. This preserves SwiftUI's native window lifecycle without replacing its window class or reading drafts.

@@ -62,7 +62,7 @@ make clean
 - Gemini CLI replaces Antigravity when that profile is absent; a browser preset replaces a missing CLI profile. All presets stay available in New Session.
 - Saved sessions are restored without duplicates. Missing CLIs show install links; AgentDeck never installs tools or signs in for you.
 - Settings → General controls the defaults and the CLI directory (`~/gitrepos`). Closing the last session leaves an empty canvas until relaunch or **Open default sessions**.
-- At startup, all mini-windows fit the visible canvas. Terminal text scales with window size; browsers fit page width with vertical scrolling. Existing manual text/zoom overrides remain fixed. New windows start at 1400×900.
+- Restart restores mini-window sizes and canvas positions even when the canvas dimensions change; off-screen windows remain reachable by scrolling. A saved grid reopens with its geometry fixed on the canvas. An initially empty workspace fits its first windows automatically; **Fill Canvas** rearranges them on request. Terminal text scales with window size; browsers fit page width with vertical scrolling. Manual text/zoom overrides remain fixed. New windows start at 1400×900.
 - Terminal/browser splits are on by default; Window actions can switch to single-tab mode. Double-click a window’s top bar to fill the canvas and double-click again to restore its position and size.
 - **Demo mode** in the toolbar replaces private main-window content with synthetic text for screenshots while sessions keep running. Toggle off to return to live content.
 - The first click in an inactive pane focuses it; later clicks reach its terminal or browser.

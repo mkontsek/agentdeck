@@ -4,7 +4,7 @@ import XCTest
 
 final class ConnectedPaneRenderingTests: XCTestCase {
     @MainActor
-    func testStartupFitsRestoredOffscreenWorkerOnFirstLayout() async throws {
+    func testStartupPreservesRestoredOffscreenWorkerAndRevealsItWithoutRepacking() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let url = directory.appendingPathComponent("state.json")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -12,10 +12,12 @@ final class ConnectedPaneRenderingTests: XCTestCase {
         var parent = ManagedSession(name: "Parent", kind: .cli)
         parent.cliProfileID = "codex"
         parent.canvasPosition = PanePoint(x: 16, y: 16)
+        parent.paneSize = PaneSize(width: 360, height: 280)
         source.addSession(parent, start: false)
         let worker = try source.delegateTask(
             from: parent.id, title: "Restored worker", instructions: "Fixture", start: false)
         source.setCanvasPosition(for: worker.id, PanePoint(x: 1800, y: 900))
+        source.setPaneSize(for: worker.id, PaneSize(width: 420, height: 310))
         source.selectTab(worker.id)
         source.shutdown()
         let store = AppStore(stateURL: url)
@@ -27,15 +29,26 @@ final class ConnectedPaneRenderingTests: XCTestCase {
             defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close() }
-        let host = NSHostingView(rootView: PaneGridView().environmentObject(store))
+        let host = NSHostingView(rootView: PaneGridView().environmentObject(store).preferredColorScheme(.dark))
         window.contentView = host
         window.orderFrontRegardless()
         try await Task.sleep(for: .milliseconds(400))
         let scroller = try XCTUnwrap(descendants(host).compactMap { $0 as? NSScrollView }.first)
-        XCTAssertEqual(scroller.contentView.bounds.origin, .zero)
-        XCTAssertTrue(store.paneFrames(in: host.bounds.size).values.allSatisfy { host.bounds.contains($0) })
+        let frames = store.paneFrames(in: host.bounds.size)
+        XCTAssertEqual(frames[parent.paneID], CGRect(x: 16, y: 16, width: 360, height: 280))
+        let workerFrame = try XCTUnwrap(frames[worker.paneID])
+        XCTAssertEqual(workerFrame, CGRect(x: 1800, y: 900, width: 420, height: 310))
+        XCTAssertTrue(scroller.contentView.bounds.contains(workerFrame), "Reveal by scrolling, without moving the pane")
+        let resizeFrames = descendants(host).compactMap { ($0 as? MiniWindowResizeView)?.windowFrame }
+        XCTAssertTrue(resizeFrames.contains(workerFrame), "Native window chrome uses the persisted frame")
         XCTAssertEqual(store.focusedSessionID, worker.id)
         XCTAssertEqual(store.pane(containing: worker.id)?.activeSession.id, worker.id)
+        try save(host, name: "agentdeck-restored-small-dark")
+        window.setContentSize(CGSize(width: 1600, height: 900))
+        host.rootView = PaneGridView().environmentObject(store).preferredColorScheme(.light)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(store.paneFrames(in: host.bounds.size), frames)
+        try save(host, name: "agentdeck-restored-large-light")
     }
 
     @MainActor

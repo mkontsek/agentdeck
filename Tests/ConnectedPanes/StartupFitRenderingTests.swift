@@ -11,6 +11,7 @@ final class StartupFitRenderingTests: XCTestCase {
             store.shutdown()
             try? FileManager.default.removeItem(at: directory)
         }
+        store.prepareStartupLayout()
         for index in 0..<20 {
             var session = ManagedSession(name: "Agent \(index + 1)", kind: .cli)
             session.canvasPosition = PanePoint(x: Double(index) * 1000, y: 1000)
@@ -18,7 +19,6 @@ final class StartupFitRenderingTests: XCTestCase {
             store.runtime[session.id]?.isRunning = true
             _ = store.terminals.makeView(for: session.id, font: store.font(for: session))
         }
-        store.prepareStartupLayout()
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 1200, height: 760), styleMask: [.titled], backing: .buffered,
             defer: false)

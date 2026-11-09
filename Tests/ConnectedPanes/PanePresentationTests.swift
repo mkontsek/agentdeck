@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class PanePresentationTests: XCTestCase {
-    func testStartupFitsTwentyWindowsOncePreservingOverridesAndIdentity() throws {
+    func testInitiallyEmptyWorkspaceFitsTwentyWindowsOnceAndPreservesThatLayoutOnRestart() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let url = directory.appendingPathComponent("state.json")
         let store = AppStore(stateURL: url)
@@ -40,16 +40,16 @@ final class PanePresentationTests: XCTestCase {
             store.session(ids[4])?.canvasPosition, PanePoint(x: 1600, y: 900),
             "Later viewport changes retain manual layout")
         store.saveNow()
+        let savedPositions = store.sessions.map(\.canvasPosition)
+        let savedSizes = store.sessions.map(\.paneSize)
         let restored = AppStore(stateURL: url)
         defer { restored.shutdown() }
         restored.prepareStartupLayout()
         restored.updateCanvasViewport(CGSize(width: 1000, height: 700))
         XCTAssertEqual(restored.sessions.map(\.id), ids)
         XCTAssertEqual(restored.sessions[0].fontSizeOverride, 17)
-        XCTAssertTrue(
-            restored.paneFrames(in: restored.canvasViewport).values.allSatisfy {
-                CGRect(origin: .zero, size: restored.canvasViewport).contains($0)
-            })
+        XCTAssertEqual(restored.sessions.map(\.canvasPosition), savedPositions)
+        XCTAssertEqual(restored.sessions.map(\.paneSize), savedSizes)
     }
 
     func testResizeScalesTerminalAndBrowserWithIndependentPersistedOverrides() throws {

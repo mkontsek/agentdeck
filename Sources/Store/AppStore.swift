@@ -248,6 +248,7 @@ final class AppStore: ObservableObject {
         st.selectedBrowserTabs = selectedBrowserTabs
         st.selectedPaneTabs = selectedPaneTabs
         st.expandedSubagentTabs = expandedSubagentTabs
+        snapshotPaneLayout(into: &st)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
