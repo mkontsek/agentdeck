@@ -185,8 +185,11 @@ struct PaneView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 8).stroke(
-                focused ? Color.accentColor : Color.gray.opacity(0.35), lineWidth: focused ? 2 : 1)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.blue, lineWidth: focused ? 2.5 : 1.5)
+                .shadow(color: Color.blue.opacity(focused ? 0.22 : 0), radius: 4)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         )
         .overlay {
             if mode != .fixed {

@@ -9,6 +9,7 @@ Main [Terminal | Browser tabs] ──┐
 
 ## Layout and text
 
+- Every mini-window keeps a blue outline. The focused window has a slightly thicker outline and faint blue glow; this decoration does not change window size or intercept input.
 - Startup opens Sessions and restores saved mini-window sizes and canvas positions, regardless of the new viewport dimensions. Off-screen windows remain in place and are reachable by scrolling or selecting their tab/relationship button. Only an initially empty workspace fits its first windows automatically. **Fill Canvas** and **Tidy** remain explicit layout actions.
 - A measured grid is saved as fixed window geometry and reopens in canvas mode, so a smaller or larger app window cannot reflow it. Choose Grid again for responsive tiling. Temporary maximize does not overwrite the underlying window sizes. Older grid saves contain only their prior canvas geometry; that is retained instead of inventing an unavailable old viewport.
 - Drag the title/grip; resize from the bottom-right grip; double-click the top bar to fill the canvas and double-click again to restore the saved position/size. Window actions also offers movement, size presets and maximize/restore. Compact windows keep a small header and one visible tab row so content retains space.
