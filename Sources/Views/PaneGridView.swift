@@ -9,6 +9,7 @@ struct PaneGridView: View {
     var body: some View {
         GeometryReader { geometry in
             let frames = store.paneFrames(in: geometry.size)
+            let maximizedPaneID = store.session(store.maximizedSessionID)?.paneID
             let extent =
                 store.maximizedSessionID == nil
                 ? CGSize(
@@ -18,7 +19,13 @@ struct PaneGridView: View {
                 ScrollView([.horizontal, .vertical]) {
                     ZStack(alignment: .topLeading) {
                         Color.clear.frame(width: 1, height: 1).id("pane-origin")
-                        CanvasScrollObserver(store: store).frame(width: 1, height: 1).accessibilityHidden(true)
+                        CanvasScrollObserver(
+                            store: store,
+                            frames: connectionFrames(frames).filter {
+                                maximizedPaneID == nil || $0.key == maximizedPaneID
+                            },
+                            focusedPaneID: store.pane(containing: store.focusedSessionID)?.id
+                        ).frame(width: 1, height: 1).accessibilityHidden(true)
                         CanvasBackground()
                             .frame(width: extent.width, height: extent.height)
                             .contentShape(Rectangle()).onTapGesture { store.focusedSessionID = nil }

@@ -33,6 +33,8 @@ struct SidebarView: View {
                 WorkspaceMotion.animation(reduceMotion: reduceMotion),
                 value: store.recruits.filter { $0.status == .pending }.map(\.id))
             Divider()
+            CanvasMiniMapView(overview: store.canvasOverview)
+            Divider()
             HStack(spacing: 6) {
                 Circle().fill(store.mcpStatus.hasPrefix("listening") ? Color.green : Color.red).frame(
                     width: 7, height: 7)

@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-11-09: Show the canvas viewport in the Sessions sidebar
+
+The user requested a small mini-window diagram showing the viewport relative to the whole canvas. Keep it anchored beneath the scrollable session list, with window rectangles and a distinct dashed viewport outline. Use native scroll geometry rather than inferring the viewport from focus or stored window positions. The map remains a passive overview; existing scrolling and relationship navigation retain their input behavior.
+
+Publish transient geometry through a separate observable owner instead of AppStore's global publisher, so panning does not invalidate every terminal pane. Coalesce updates within one main-queue turn, deduplicate equal snapshots and bind callbacks to the attached native observer. Show only the expanded pane in maximized mode, matching the currently displayed canvas. Persisted layout and provider/session identity remain unchanged.
+
 ## 2026-11-09: Preserve mini-window geometry across restart
 
 The user wants saved sizes and positions retained even when the next canvas has different dimensions. This supersedes the November 7 decision to fit every window at every startup. Fit only an initially empty workspace's first windows; restored panes keep their stored geometry and off-screen panes remain reachable by scrolling. Explicit Fill Canvas, Tidy and Grid still rearrange the workspace when requested.

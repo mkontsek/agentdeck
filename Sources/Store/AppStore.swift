@@ -58,6 +58,7 @@ final class AppStore: ObservableObject {
 
     var nextTaskID = 1
     let terminals = TerminalHost()
+    let canvasOverview = CanvasOverviewState()
     let browsers = BrowserHost()
     let skillLibrary = SkillLibrary()
     let usageMonitor: CLIUsageMonitor

@@ -4,14 +4,20 @@ import SwiftUI
 /// Keep native terminal layers while panning; parsing and input continue in their existing owners.
 struct CanvasScrollObserver: NSViewRepresentable {
     let store: AppStore
+    let frames: [UUID: CGRect]
+    let focusedPaneID: UUID?
 
     func makeNSView(context: Context) -> CanvasScrollObservationView {
         let view = CanvasScrollObservationView()
         view.store = store
+        view.frames = frames
+        view.focusedPaneID = focusedPaneID
         return view
     }
 
     func updateNSView(_ view: CanvasScrollObservationView, context: Context) {
+        view.frames = frames
+        view.focusedPaneID = focusedPaneID
         view.scheduleVisibilityRefresh()
     }
 
@@ -20,11 +26,15 @@ struct CanvasScrollObserver: NSViewRepresentable {
 
 final class CanvasScrollObservationView: NSView {
     weak var store: AppStore?
+    var frames: [UUID: CGRect] = [:]
+    var focusedPaneID: UUID?
     private weak var scrollView: NSScrollView?
     private var observer: NSObjectProtocol?
     private var inputObserver: NSObjectProtocol?
     private var resumeWork: DispatchWorkItem?
     private var refreshScheduled = false
+    private var overviewRefreshScheduled = false
+    private var overviewSourceID: UUID?
     private(set) var isInteracting = false
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -39,6 +49,7 @@ final class CanvasScrollObservationView: NSView {
     private func connect() {
         guard observer == nil, window != nil, let scroll = enclosingScrollView else { return }
         scrollView = scroll
+        overviewSourceID = store?.canvasOverview.attach()
         scroll.contentView.postsBoundsChangedNotifications = true
         observer = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
@@ -85,6 +96,7 @@ final class CanvasScrollObservationView: NSView {
 
     func refreshVisibility() {
         guard let store, let scroll = scrollView, let document = scroll.documentView else { return }
+        scheduleOverviewRefresh()
         let visible = scroll.contentView.bounds
         for (id, terminal) in store.terminals.views {
             let attached = terminal.window === window && terminal.enclosingScrollView === scroll
@@ -98,7 +110,30 @@ final class CanvasScrollObservationView: NSView {
         }
     }
 
+    private func scheduleOverviewRefresh() {
+        guard let sourceID = overviewSourceID, !overviewRefreshScheduled else { return }
+        overviewRefreshScheduled = true
+        // Publish outside native/SwiftUI layout and coalesce within one main-queue turn.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.overviewSourceID == sourceID else { return }
+            self.overviewRefreshScheduled = false
+            guard let store = self.store, let scroll = self.scrollView, let document = scroll.documentView,
+                self.window != nil, self.enclosingScrollView === scroll
+            else { return }
+            store.canvasOverview.update(
+                CanvasOverviewSnapshot(
+                    bounds: document.bounds, viewport: scroll.documentVisibleRect,
+                    panes: self.frames, focusedPaneID: self.focusedPaneID),
+                from: sourceID)
+        }
+    }
+
     func disconnect() {
+        if let sourceID = overviewSourceID, let overview = store?.canvasOverview {
+            DispatchQueue.main.async { overview.detach(sourceID) }
+        }
+        overviewSourceID = nil
+        overviewRefreshScheduled = false
         if let observer { NotificationCenter.default.removeObserver(observer) }
         if let inputObserver { NotificationCenter.default.removeObserver(inputObserver) }
         observer = nil
