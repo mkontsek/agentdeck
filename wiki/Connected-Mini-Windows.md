@@ -2,6 +2,12 @@
 
 Each subagent has an independent movable/resizable AgentDeck mini-window. Its browser tabs live inside that window, alongside its terminal. Terminal/browser split mode is the default; wide windows show both side by side and compact windows stack them. Window actions → Split terminal and browser switches back to single-tab presentation and persists per owner. Ordinary agents retain their existing tab groups; browser ownership remains per agent.
 
+Drag the divider between the terminal and browser to change their share of the mini-window. The vertical divider moves left/right; in compact stacked windows it moves up/down. Double-click it to restore equal sizes. The ratio is saved per agent across restarts and window resizing. Both sides retain a usable minimum size; expanding again restores the preferred ratio. The divider also exposes an adjustable accessibility control. Dragging preserves keyboard focus and the existing terminal/browser instances.
+
+Enable **Glass balls** in the toolbar to collapse unfocused subagents into glowing status balls. Hover expands the original mini-window without taking keyboard focus; selecting a subagent keeps it expanded while focused. Main conversations stay open. Green means finished, pulsing yellow means attention is needed (including task approval), and blue means working/starting. Gray means idle without a confirmed completion. Labels and symbols accompany the colors; Reduce Motion disables pulsing.
+
+The toggle persists, while temporary hover expansion does not. Original window positions, sizes, browser splits and native sessions remain retained. Arrows and the sidebar map follow the displayed compact/expanded bounds. Collapsed terminals continue receiving and parsing output but defer painting; their owned WebKit views are hidden. This saves display work, not provider execution or arbitrary browser JavaScript. It does not suspend agents, discard output or read user drafts.
+
 ```text
 Main [Terminal | Browser tabs] ──┐
                                 └──→ Worker [Terminal | Browser tabs]

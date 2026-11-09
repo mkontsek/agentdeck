@@ -7,18 +7,22 @@ final class DeckTerminalView: LocalProcessTerminalView {
     var onFocus: (() -> Void)?
     private var pendingCanvasDisplay = false
     var defersCanvasDisplay = false {
-        didSet {
-            if oldValue && !defersCanvasDisplay && pendingCanvasDisplay {
-                pendingCanvasDisplay = false
-                super.needsDisplay = true
-            }
+        didSet { flushDeferredDisplay() }
+    }
+    var defersGlassBallDisplay = false { didSet { flushDeferredDisplay() } }
+    private var defersDisplay: Bool { defersCanvasDisplay || defersGlassBallDisplay }
+
+    private func flushDeferredDisplay() {
+        if !defersDisplay && pendingCanvasDisplay {
+            pendingCanvasDisplay = false
+            super.needsDisplay = true
         }
     }
 
     override var needsDisplay: Bool {
         get { super.needsDisplay }
         set {
-            if newValue && defersCanvasDisplay {
+            if newValue && defersDisplay {
                 pendingCanvasDisplay = true
             } else {
                 super.needsDisplay = newValue
@@ -27,7 +31,7 @@ final class DeckTerminalView: LocalProcessTerminalView {
     }
 
     override func setNeedsDisplay(_ invalidRect: NSRect) {
-        if defersCanvasDisplay {
+        if defersDisplay {
             pendingCanvasDisplay = true
         } else {
             super.setNeedsDisplay(invalidRect)

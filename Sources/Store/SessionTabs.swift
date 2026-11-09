@@ -54,8 +54,11 @@ extension AppStore {
         focusedSessionID = id
         guard !isDemoMode, settings.workspaceMode == .sessions else { return }
         if let terminal = terminals.view(for: id) {
+            terminal.defersGlassBallDisplay = false
+            terminal.isHidden = false
             terminal.window?.makeFirstResponder(terminal)
         } else {
+            browsers.controllers[id]?.webView.isHidden = false
             browsers.controllers[id]?.webView.requestKeyboardFocus()
         }
     }

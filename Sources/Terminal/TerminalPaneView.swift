@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TerminalPaneView: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.isGlassBallCollapsed) private var collapsed
     let session: ManagedSession
 
     var body: some View {
@@ -10,9 +11,9 @@ struct TerminalPaneView: View {
         ZStack {
             TerminalRepresentable(
                 terminal: store.terminals.view(for: session.id), font: store.font(for: session),
-                focused: !store.isDemoMode && store.focusedSessionID == session.id
+                focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
                     && store.settings.workspaceMode == .sessions,
-                generation: rt?.generation ?? 0)
+                generation: rt?.generation ?? 0, collapsed: collapsed)
             if rt?.isRunning != true {
                 VStack(spacing: 8) {
                     if rt?.exitCode == 127, let profile = store.profile(for: session), let url = profile.setupURL {
@@ -37,6 +38,7 @@ struct TerminalRepresentable: NSViewRepresentable {
     let font: NSFont
     let focused: Bool
     let generation: Int
+    var collapsed = false
 
     final class Coordinator {
         var wasFocused: Bool?
@@ -58,7 +60,13 @@ struct TerminalRepresentable: NSViewRepresentable {
     static func dismantleNSView(_ c: TerminalContainerView, coordinator: Coordinator) {
         // The host retains the PTY and screen while this tab is hidden.
         c.focusWhenAttached = false
-        for view in c.subviews { view.removeFromSuperview() }
+        for view in c.subviews {
+            if let terminal = view as? DeckTerminalView {
+                terminal.defersGlassBallDisplay = false
+                terminal.isHidden = false
+            }
+            view.removeFromSuperview()
+        }
     }
 
     private func attach(to c: TerminalContainerView, coordinator: Coordinator) {
@@ -73,6 +81,8 @@ struct TerminalRepresentable: NSViewRepresentable {
             return
         }
         var attached = false
+        tv.defersGlassBallDisplay = collapsed
+        tv.isHidden = collapsed
         if focused { tv.defersCanvasDisplay = false }
         if becameUnfocused, c.window?.firstResponder === tv { c.window?.makeFirstResponder(nil) }
         if tv.superview !== c {

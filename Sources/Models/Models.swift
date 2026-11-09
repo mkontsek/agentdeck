@@ -128,6 +128,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     var paneID: UUID = UUID()
     var fontSizeOverride: Double? = nil
     var browserSplitEnabled = true
+    var browserSplitFraction = BrowserSplitGeometry.defaultFraction
     var paneSize: PaneSize? = nil
     var canvasPosition: PanePoint? = nil
     var zIndex: Int = 0
@@ -150,7 +151,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, kind, createdAt, cliProfileID, workingDirectory, worktreePath, worktreeBranch, worktreeRepo,
             initialPrompt, url, browserProfileID, browserProfileMode, agentOwnerID, paneID, fontSizeOverride, paneSize,
-            canvasPosition, browserSplitEnabled,
+            canvasPosition, browserSplitEnabled, browserSplitFraction,
             zIndex, isOrchestrator,
             autoInjectContext, autoStart, resumeLastConversation, resumeOnRestart,
             parentSessionID, delegatedTaskID, subagentCompleted
@@ -178,6 +179,8 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         paneID = c.value(.paneID, default: id)
         fontSizeOverride = c.value(.fontSizeOverride, default: nil)
         browserSplitEnabled = c.value(.browserSplitEnabled, default: true)
+        browserSplitFraction = BrowserSplitGeometry.clampedFraction(
+            c.value(.browserSplitFraction, default: BrowserSplitGeometry.defaultFraction))
         paneSize = c.value(.paneSize, default: nil)
         canvasPosition = c.value(.canvasPosition, default: nil)
         zIndex = c.value(.zIndex, default: 0)
@@ -398,6 +401,7 @@ struct AppSettings: Codable {
     var maximumConcurrentSubagents = SubagentLimits.defaultConcurrentWorkers
     var concurrentSubagentDefaultUpdated = true
     var subagentSplitLayout: SubagentSplitLayout = .automatic
+    var glassBallSubagents = false
     var showUsagePanel = true
     var usagePanelPosition = PanePoint(x: 960, y: 80)
     var usagePanelSize = PaneSize(width: 420, height: 360)
@@ -411,7 +415,8 @@ struct AppSettings: Codable {
         case globalFontSize, fontName, defaultPanePreset, gridColumns, layoutMode, mcpPort, idleAfterSeconds,
             stallAfterSeconds, worktreeRoot, appearance, showSidebar, showInspector, showBottomPanel, bottomPanelHeight
         case workspaceMode, approveAgentHandoffs, showUsagePanel, usagePanelPosition, usagePanelSize, arrowColorHex
-        case automaticSubagents, maximumConcurrentSubagents, concurrentSubagentDefaultUpdated, subagentSplitLayout
+        case automaticSubagents, maximumConcurrentSubagents, concurrentSubagentDefaultUpdated, subagentSplitLayout,
+            glassBallSubagents
     }
 
     init(from decoder: Decoder) throws {
@@ -454,6 +459,7 @@ struct AppSettings: Codable {
         }
         concurrentSubagentDefaultUpdated = true
         subagentSplitLayout = c.value(.subagentSplitLayout, default: d.subagentSplitLayout)
+        glassBallSubagents = c.value(.glassBallSubagents, default: d.glassBallSubagents)
         showUsagePanel = c.value(.showUsagePanel, default: d.showUsagePanel)
         usagePanelPosition = c.value(.usagePanelPosition, default: d.usagePanelPosition)
         usagePanelSize = c.value(.usagePanelSize, default: d.usagePanelSize)

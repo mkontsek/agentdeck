@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-11-09: Collapse subagents into status glass balls
+
+The user requested a performance-saving glass-ball mode with hover expansion. Persist only the opt-in toggle; preserve the normal pane geometry and native resource identities. Hover is passive and transient. Keep focused panes expanded so pointer exit cannot hide a typing target; explicit sidebar, keyboard or ball selection opens the pane using the existing focus path.
+
+Use working/attention/finished/idle states with symbols and accessible labels. Attention takes precedence over completion and includes pending task review/approval; idle alone is not proof of success. Only attention pulses, with Reduce Motion respected. Feed displayed compact bounds to connector routing and the canvas overview. Hide retained WebKit views and separately gate terminal paint invalidations while continuing PTY parsing. Do not claim to suspend browser scripts or provider execution. This is a rendering optimization, not input coordination or a new session lifecycle.
+
+## 2026-11-09: Resize the terminal/browser split without replacing native hosts
+
+The user requested a movable vertical separator inside each mini-window. Keep the existing stable AnyLayout/session identity and add a narrow native divider, also supporting the stacked compact layout. Mouse positions are measured in window coordinates so moving the divider does not distort subsequent drag deltas. Keep previews local and persist the per-owner ratio only on release, avoiding global terminal-pane invalidations on every mouse move.
+
+Default older sessions to equal shares, bound stored ratios and adapt minimum sizes to small containers without overwriting the saved preference. Cancel obsolete gestures when their owner, visible pair, axis, size or native attachment changes. Do not request focus or touch provider input; task79's separate coordination inbox and task60's explicit paste/Enter path remain unchanged. Double-click resets equal shares and accessibility adjustment uses the same setter.
+
 ## 2026-11-09: Show the canvas viewport in the Sessions sidebar
 
 The user requested a small mini-window diagram showing the viewport relative to the whole canvas. Keep it anchored beneath the scrollable session list, with window rectangles and a distinct dashed viewport outline. Use native scroll geometry rather than inferring the viewport from focus or stored window positions. The map remains a passive overview; existing scrolling and relationship navigation retain their input behavior.

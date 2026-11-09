@@ -24,6 +24,15 @@ extension AppStore {
         updateSession(owner)
     }
 
+    func setBrowserSplitFraction(for ownerID: UUID, _ fraction: Double) {
+        guard fraction.isFinite, let index = sessions.firstIndex(where: { $0.id == ownerID && $0.kind == .cli })
+        else { return }
+        let fraction = BrowserSplitGeometry.clampedFraction(fraction)
+        guard sessions[index].browserSplitFraction != fraction else { return }
+        sessions[index].browserSplitFraction = fraction
+        scheduleSave()
+    }
+
     func toggleMaximize(_ id: UUID) {
         guard let pane = pane(containing: id) else { return }
         if session(maximizedSessionID)?.paneID == pane.id {

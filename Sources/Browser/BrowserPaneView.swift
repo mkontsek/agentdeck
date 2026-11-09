@@ -19,6 +19,7 @@ struct BrowserPaneView: View {
 
 private struct BrowserInner: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.isGlassBallCollapsed) private var collapsed
     @ObservedObject var controller: BrowserController
     let session: ManagedSession
 
@@ -64,8 +65,8 @@ private struct BrowserInner: View {
             WebViewRepresentable(
                 webView: controller.webView,
                 zoom: store.browserZoomOverride(for: session),
-                focused: !store.isDemoMode && store.focusedSessionID == session.id
-                    && store.settings.workspaceMode == .sessions)
+                focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
+                    && store.settings.workspaceMode == .sessions, collapsed: collapsed)
         }
     }
 }
@@ -74,6 +75,7 @@ struct WebViewRepresentable: NSViewRepresentable {
     let webView: FocusProtectedWebView
     var zoom: Double? = nil
     let focused: Bool
+    var collapsed = false
 
     func makeNSView(context: Context) -> BrowserContainerView {
         let c = BrowserContainerView()
@@ -88,11 +90,13 @@ struct WebViewRepresentable: NSViewRepresentable {
         c.focusWhenAttached = false
         for case let view as FocusProtectedWebView in c.subviews {
             view.allowsKeyboardFocus = false
+            view.isHidden = false
             view.removeFromSuperview()
         }
     }
 
     private func attach(_ c: BrowserContainerView) {
+        webView.isHidden = collapsed
         webView.pageFit.setZoom(manual: zoom)
         webView.allowsKeyboardFocus = focused
         if webView.superview !== c {
