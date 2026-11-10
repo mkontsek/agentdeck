@@ -90,14 +90,20 @@ final class GlassBallTests: XCTestCase {
         let originalSize = store.session(child.id)?.paneSize
         let originalPosition = store.session(child.id)?.canvasPosition
         let nativeSize = terminal.bounds.size
+        let webSize = browser.webView.bounds.size
         store.settings.glassBallSubagents = true
         for _ in 0..<200 where !terminal.isHidden { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(terminal.isHidden && terminal.defersGlassBallDisplay)
         XCTAssertTrue(browser.webView.isHidden)
+        XCTAssertEqual(terminal.bounds.size, nativeSize, "Collapsed layout must retain exact PTY geometry")
+        XCTAssertEqual(browser.webView.bounds.size, webSize)
         XCTAssertTrue(window.firstResponder === parentTerminal)
         XCTAssertEqual(store.canvasOverview.snapshot?.panes[child.paneID]?.size, GlassBallStatus.compactSize)
         let document = try XCTUnwrap(terminal.enclosingScrollView?.documentView)
-        let point = document.convert(CGPoint(x: 500, y: 60), to: nil)
+        let frames = store.paneFrames(in: store.canvasViewport)
+        let dock = try XCTUnwrap(store.glassBallDocks(in: frames)[child.paneID])
+        let sphere = dock.sphereFrame(in: try XCTUnwrap(frames[child.paneID]))
+        let point = document.convert(CGPoint(x: sphere.midX, y: sphere.midY), to: nil)
         window.sendEvent(try mouse(.mouseMoved, at: point, window: window))
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertTrue(terminal.isHidden, "Hover must never open a ball")
@@ -117,7 +123,11 @@ final class GlassBallTests: XCTestCase {
         )
         window.sendEvent(try mouse(.leftMouseDown, at: point, window: window))
         window.sendEvent(try mouse(.leftMouseUp, at: point, window: window))
-        try await Task.sleep(for: .milliseconds(350))
+        for _ in 0..<12 {
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(terminal.bounds.size, nativeSize, "Every sampled expansion frame must preserve PTY geometry")
+            XCTAssertEqual(browser.webView.bounds.size, webSize)
+        }
         XCTAssertFalse(terminal.isHidden || terminal.defersGlassBallDisplay)
         XCTAssertFalse(browser.webView.isHidden)
         XCTAssertTrue(terminal.superview === container)
@@ -140,6 +150,8 @@ final class GlassBallTests: XCTestCase {
         XCTAssertEqual(terminal.bounds.size, nativeSize)
         for _ in 0..<200 where !terminal.isHidden { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(terminal.isHidden)
+        XCTAssertEqual(terminal.bounds.size, nativeSize)
+        XCTAssertEqual(browser.webView.bounds.size, webSize)
         store.settings.glassBallSubagents = false
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertFalse(terminal.isHidden || browser.webView.isHidden)

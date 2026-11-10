@@ -1,6 +1,17 @@
 import Foundation
 
 extension AppStore {
+    func glassBallDocks(in frames: [UUID: CGRect]) -> [UUID: GlassBallDock] {
+        var docks: [UUID: GlassBallDock] = [:]
+        for pane in panes {
+            guard let owner = glassBallOwner(in: pane), let frame = frames[pane.id],
+                let parentID = session(owner.parentSessionID)?.paneID, let parent = frames[parentID]
+            else { continue }
+            docks[pane.id] = GlassBallDock(frame: frame, parent: parent)
+        }
+        return docks
+    }
+
     func glassBallOwner(in pane: SessionPane) -> ManagedSession? {
         guard let owner = browserOwner(for: pane.activeSession), owner.parentSessionID != nil else { return nil }
         return owner

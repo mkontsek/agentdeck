@@ -4,13 +4,14 @@ import SwiftUI
 struct PaneConnectionsView: View {
     let connections: [PaneConnection]
     let frames: [UUID: CGRect]
+    var docks: [UUID: GlassBallDock] = [:]
     var color: Color = CanvasArrowColor.color(hex: AppSettings().arrowColorHex)
     @StateObject private var cache = PaneRouteCache()
 
     var body: some View {
         Canvas { context, size in
             let routes = cache.paths(
-                connections: connections, frames: frames,
+                connections: connections, frames: frames, docks: docks,
                 bounds: CGRect(
                     origin: CGPoint(x: 2, y: 2),
                     size: CGSize(width: max(0, size.width - 4), height: max(0, size.height - 4))))

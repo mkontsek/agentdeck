@@ -5,6 +5,49 @@ import XCTest
 
 @MainActor
 final class CanvasMiniMapTests: XCTestCase {
+    func testMapDragSurvivesViewportClippingAndFractionalScrollRounding() throws {
+        let state = CanvasOverviewState()
+        let canvas = CGRect(x: 0, y: 0, width: 2000, height: 1000)
+        let initial = try XCTUnwrap(
+            CanvasOverviewSnapshot(
+                bounds: canvas,
+                viewport: CGRect(x: -8, y: -4, width: 500, height: 400), panes: [:], focusedPaneID: nil))
+        var destinations: [CGPoint] = []
+        let source = state.attach { destinations.append($0) }
+        state.update(initial, from: source)
+        let map = CanvasMiniMapInputView(frame: CGRect(x: 0, y: 0, width: 240, height: 104))
+        let window = NSWindow(contentRect: map.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = map
+        defer { window.close() }
+        map.configure(overview: state, snapshot: initial)
+        let projection = try XCTUnwrap(CanvasOverviewProjection(bounds: canvas, size: map.bounds.size))
+        let rect = projection.project(initial.viewport)
+        let point = map.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil)
+        map.mouseDown(with: try mouse(.leftMouseDown, at: point, window: window))
+        for step in 1...12 {
+            map.mouseDragged(
+                with: try mouse(
+                    .leftMouseDragged,
+                    at: CGPoint(x: point.x + CGFloat(step) * 2, y: point.y - CGFloat(step)), window: window))
+            let update = try XCTUnwrap(
+                CanvasOverviewSnapshot(
+                    bounds: canvas,
+                    viewport: CGRect(
+                        x: CGFloat(step) * 20, y: CGFloat(step) * 10,
+                        width: 500 + (step.isMultiple(of: 2) ? 0.0000001 : 0), height: 400),
+                    panes: [:], focusedPaneID: nil))
+            state.update(update, from: source)
+            map.configure(overview: state, snapshot: update)
+        }
+        XCTAssertEqual(
+            destinations.count, 12, "A pan's own clipped/rounded viewport updates must not release its gesture")
+        if let first = destinations.first, let last = destinations.last {
+            XCTAssertGreaterThan(last.x, first.x + 100)
+            XCTAssertGreaterThan(last.y, first.y + 50)
+        }
+    }
+
     func testProjectionPreservesViewportProportionsAndRejectsInvalidGeometry() throws {
         let paneID = UUID()
         let bounds = CGRect(x: 0, y: 0, width: 2400, height: 1200)
@@ -131,12 +174,13 @@ final class CanvasMiniMapTests: XCTestCase {
         window.sendEvent(try mouse(.leftMouseDown, at: start, window: window))
         XCTAssertEqual(
             scroll.documentVisibleRect.origin, original.viewport.origin, "Grabbing the viewport must not jump")
-        for delta in [CGPoint(x: 15, y: -8), CGPoint(x: 30, y: -16)] {
+        for step in 1...12 {
+            let delta = CGPoint(x: CGFloat(step) * 2.5, y: -CGFloat(step) * 1.5)
             window.sendEvent(
                 try mouse(.leftMouseDragged, at: CGPoint(x: start.x + delta.x, y: start.y + delta.y), window: window))
             try await Task.sleep(for: .milliseconds(30))
         }
-        window.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: start.x + 30, y: start.y - 16), window: window))
+        window.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: start.x + 30, y: start.y - 18), window: window))
         try await Task.sleep(for: .milliseconds(180))
         let scrolled = try XCTUnwrap(store.canvasOverview.snapshot)
         XCTAssertEqual(scrolled.viewport, scroll.documentVisibleRect.intersection(scrolled.bounds))

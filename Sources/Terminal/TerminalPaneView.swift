@@ -4,6 +4,7 @@ import SwiftUI
 struct TerminalPaneView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.isGlassBallCollapsed) private var collapsed
+    @Environment(\.isGlassBallTransitioning) private var transitioning
     let session: ManagedSession
 
     var body: some View {
@@ -13,7 +14,7 @@ struct TerminalPaneView: View {
                 terminal: store.terminals.view(for: session.id), font: store.font(for: session),
                 focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
                     && store.settings.workspaceMode == .sessions,
-                generation: rt?.generation ?? 0, collapsed: collapsed)
+                generation: rt?.generation ?? 0, collapsed: collapsed, transitioning: transitioning)
             if rt?.isRunning != true {
                 VStack(spacing: 8) {
                     if rt?.exitCode == 127, let profile = store.profile(for: session), let url = profile.setupURL {
@@ -39,6 +40,7 @@ struct TerminalRepresentable: NSViewRepresentable {
     let focused: Bool
     let generation: Int
     var collapsed = false
+    var transitioning = false
 
     final class Coordinator {
         var wasFocused: Bool?
@@ -64,6 +66,7 @@ struct TerminalRepresentable: NSViewRepresentable {
             if let terminal = view as? DeckTerminalView {
                 terminal.defersGlassBallDisplay = false
                 terminal.isHidden = false
+                terminal.autoresizingMask = [.width, .height]
             }
             view.removeFromSuperview()
         }
@@ -94,6 +97,12 @@ struct TerminalRepresentable: NSViewRepresentable {
             attached = true
         }
         c.focusWhenAttached = focused && (attached || becameFocused || c.focusWhenAttached)
+        if transitioning || collapsed {
+            tv.autoresizingMask = []
+        } else if tv.autoresizingMask.isEmpty {
+            tv.frame = c.bounds
+            tv.autoresizingMask = [.width, .height]
+        }
         c.focusTerminalIfNeeded()
         if tv.font.pointSize != font.pointSize || tv.font.fontName != font.fontName { tv.font = font }
     }

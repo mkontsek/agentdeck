@@ -5,6 +5,8 @@ struct GlassBallView: View {
     let status: GlassBallStatus
     let reduceMotion: Bool
     let onOpen: () -> Void
+    var dock: GlassBallDock = .left
+    var isPresented = true
     @State private var pulse = false
 
     private var color: Color {
@@ -18,7 +20,7 @@ struct GlassBallView: View {
 
     var body: some View {
         Button(action: onOpen) {
-            VStack(spacing: 4) {
+            ZStack(alignment: .topLeading) {
                 ZStack {
                     Circle().fill(.ultraThinMaterial)
                     Circle().fill(
@@ -30,11 +32,14 @@ struct GlassBallView: View {
                     Image(systemName: status.symbol).font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(.primary).shadow(color: .white.opacity(0.5), radius: 2)
                 }
-                .frame(width: 64, height: 64)
+                .frame(width: GlassBallDock.diameter, height: GlassBallDock.diameter)
                 .shadow(color: color.opacity(pulse ? 0.8 : 0.4), radius: pulse ? 14 : 7)
-                .scaleEffect(pulse ? 1.04 : 1)
+                .animation(pulse ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true) : nil, value: pulse)
+                .position(dock.sphereCenter)
                 Text(name).font(.caption).lineLimit(1).truncationMode(.middle)
                     .padding(.horizontal, 5).background(.regularMaterial, in: Capsule())
+                    .frame(maxWidth: GlassBallStatus.compactSize.width)
+                    .position(dock.labelCenter)
             }
             .frame(width: GlassBallStatus.compactSize.width, height: GlassBallStatus.compactSize.height)
             .contentShape(Rectangle())
@@ -46,12 +51,10 @@ struct GlassBallView: View {
         .onAppear { updatePulse() }
         .onChange(of: status) { _, _ in updatePulse() }
         .onChange(of: reduceMotion) { _, _ in updatePulse() }
+        .onChange(of: isPresented) { _, _ in updatePulse() }
     }
 
     private func updatePulse() {
-        pulse = false
-        if status == .attention && !reduceMotion {
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
-        }
+        pulse = isPresented && status == .attention && !reduceMotion
     }
 }

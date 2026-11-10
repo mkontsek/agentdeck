@@ -4,6 +4,8 @@ import Foundation
 struct CanvasOverviewSnapshot: Equatable {
     let bounds: CGRect
     let viewport: CGRect
+    /// Clipping/elastic overscroll changes the drawn rectangle, not the navigation surface's size.
+    let unclippedViewport: CGRect
     let panes: [UUID: CGRect]
     let focusedPaneID: UUID?
 
@@ -13,6 +15,7 @@ struct CanvasOverviewSnapshot: Equatable {
         let extent = panes.values.reduce(bounds) { $0.union($1) }
         guard Self.isValid(extent) else { return nil }
         self.bounds = extent
+        unclippedViewport = viewport
         let visible = viewport.intersection(extent)
         self.viewport = visible.isNull ? CGRect(origin: extent.origin, size: .zero) : visible
         self.panes = panes

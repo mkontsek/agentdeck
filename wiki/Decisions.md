@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-11-10: Fixed sphere tangents and continuous map drags
+
+The user requested arrows touching spheres and staying stationary throughout slower expansion/collapse. Reserve each full window footprint for routing and choose one shared docking side from parent/worker layout geometry, independent of focus and status. Place the sphere internally tangent to the edge midpoint and scale the retained window about that same point. Route all relationships on a worker through its dock; preserve the existing rounded orthogonal router and clearance/fallback limits. Attention pulses only the glow, preserving exact contact. Shape transitions use a separate 420 ms smooth animation, 50% longer than the earlier 280 ms policy; other workspace animation is unchanged.
+
+This avoids freezing an endpoint detached from the visible surface or rerouting bends as a shape grows. Consequences: routes may traverse empty space around a collapsed footprint; multiple edges may share a short segment. A covered dock omits the line and retains relationship navigation. Genuine movement, resizing, layout or relationship changes recompute geometry. No geometry is persisted by this presentation change.
+
+The user also reported map dragging releasing immediately. The map had used its clipped viewport rectangle as a gesture-size identity; boundary clipping and fractional coordinate rounding could cancel the drag's own subsequent updates. Preserve the original unclipped viewport alongside the drawn rectangle, with a sub-half-point size tolerance for native rounding. Keep source generation, canvas bounds and map-size guards, so actual replacement or resizing still cancels stale gestures. This changes no keyboard responder, draft or global workspace publication behavior.
+
 ## 2026-11-10: Click to expand glass balls and drag the canvas map
 
 The user replaced hover expansion with explicit click activation and asked for interactive map panning plus smooth transitions. Remove hover tracking entirely. Keep expansion tied to explicit session selection, and provide a Collapse to glass ball action. Use the shared 280 ms smooth, non-bouncing motion policy for workspace transitions; Reduce Motion settles directly. Keep native terminal geometry fixed while scaling/fading layers, and defer hiding until the current animation completes. A revision guard makes interruptions/reversals safe without a timer guessing when an animation ended.

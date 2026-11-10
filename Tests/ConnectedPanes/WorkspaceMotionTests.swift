@@ -34,8 +34,14 @@ final class WorkspaceMotionTests: XCTestCase {
         XCTAssertTrue(fixture.nativeView === view)
         XCTAssertEqual(view.bounds.size, originalSize)
         fixture.collapsed = true
+        let collapseStart = ProcessInfo.processInfo.systemUptime
+        try await Task.sleep(for: .milliseconds(330))
+        XCTAssertFalse(view.isHidden, "The slower transform must still be visible after the prior 280 ms interval")
         for _ in 0..<200 where !view.isHidden { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(view.isHidden, "The completed collapse releases display work")
+        let elapsed = ProcessInfo.processInfo.systemUptime - collapseStart
+        print("SPHERE_MOTION configured=\(WorkspaceMotion.glassBallDuration) nativeCollapseCompletion=\(elapsed)")
+        XCTAssertEqual(WorkspaceMotion.glassBallDuration / WorkspaceMotion.transitionDuration, 1.5, accuracy: 0.001)
         let collapsed = try capture(host, name: "collapsed")
         XCTAssertNotEqual(intermediate, collapsed)
         fixture.reduceMotion = true

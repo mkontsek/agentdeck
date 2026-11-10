@@ -5,6 +5,7 @@ import SwiftUI
 final class GlassBallTransitionState: ObservableObject {
     @Published private(set) var visualCollapsed: Bool
     @Published private(set) var hidesContent: Bool
+    @Published private(set) var isTransitioning = false
     private var revision = 0
 
     init(collapsed: Bool) {
@@ -19,6 +20,7 @@ final class GlassBallTransitionState: ObservableObject {
         withTransaction(transaction) {
             visualCollapsed = collapsed
             hidesContent = collapsed
+            isTransitioning = false
         }
     }
 
@@ -31,11 +33,13 @@ final class GlassBallTransitionState: ObservableObject {
         revision += 1
         let current = revision
         hidesContent = false
-        withAnimation(WorkspaceMotion.animation(reduceMotion: false), completionCriteria: .removed) {
+        isTransitioning = true
+        withAnimation(WorkspaceMotion.glassBallAnimation(reduceMotion: false), completionCriteria: .removed) {
             visualCollapsed = collapsed
         } completion: { [weak self] in
             guard let self, self.revision == current else { return }
             self.hidesContent = collapsed
+            self.isTransitioning = false
         }
     }
 }
@@ -44,41 +48,45 @@ struct GlassBallTransitionView<Content: View, Ball: View>: View {
     let collapsed: Bool
     let size: CGSize
     let reduceMotion: Bool
+    let dock: GlassBallDock
     let content: Content
     let ball: Ball
     @StateObject private var motion: GlassBallTransitionState
 
     init(
-        collapsed: Bool, size: CGSize, reduceMotion: Bool, @ViewBuilder content: () -> Content,
+        collapsed: Bool, size: CGSize, reduceMotion: Bool, dock: GlassBallDock = .left,
+        @ViewBuilder content: () -> Content,
         @ViewBuilder ball: () -> Ball
     ) {
         self.collapsed = collapsed
         self.size = size
         self.reduceMotion = reduceMotion
+        self.dock = dock
         self.content = content()
         self.ball = ball()
         _motion = StateObject(wrappedValue: GlassBallTransitionState(collapsed: collapsed))
     }
 
     var body: some View {
+        let compact = dock.compactFrame(in: CGRect(origin: .zero, size: size))
         ZStack(alignment: .topLeading) {
             content
                 .environment(\.isGlassBallCollapsed, collapsed && motion.hidesContent)
+                .environment(\.isGlassBallTransitioning, motion.isTransitioning)
                 .scaleEffect(
-                    x: motion.visualCollapsed ? GlassBallStatus.compactSize.width / max(1, size.width) : 1,
-                    y: motion.visualCollapsed ? GlassBallStatus.compactSize.height / max(1, size.height) : 1,
-                    anchor: .topLeading
+                    x: motion.visualCollapsed ? GlassBallDock.diameter / max(1, size.width) : 1,
+                    y: motion.visualCollapsed ? GlassBallDock.diameter / max(1, size.height) : 1,
+                    anchor: dock.anchor
                 )
                 .opacity(motion.visualCollapsed ? 0 : 1)
                 .allowsHitTesting(!collapsed).accessibilityHidden(collapsed)
-            if motion.visualCollapsed {
-                ball.transition(.opacity.combined(with: .scale(scale: 0.65, anchor: .topLeading)))
-                    .allowsHitTesting(collapsed).accessibilityHidden(!collapsed)
-            }
+            ball
+                .offset(x: compact.minX, y: compact.minY)
+                .opacity(motion.visualCollapsed ? 1 : 0)
+                .allowsHitTesting(collapsed).accessibilityHidden(!collapsed)
         }
         .frame(
-            width: collapsed ? GlassBallStatus.compactSize.width : size.width,
-            height: collapsed ? GlassBallStatus.compactSize.height : size.height, alignment: .topLeading
+            width: size.width, height: size.height, alignment: .topLeading
         )
         .onAppear { motion.settle(collapsed: collapsed) }
         .onChange(of: collapsed) { _, value in motion.transition(to: value, reduceMotion: reduceMotion) }

@@ -27,6 +27,13 @@ final class CanvasMiniMapInputView: NSView {
         let mapSize: CGSize
         let projection: CanvasOverviewProjection
         let anchor: CGPoint
+
+        func matches(_ snapshot: CanvasOverviewSnapshot?) -> Bool {
+            guard let snapshot, snapshot.bounds == canvasBounds else { return false }
+            // Native coordinate conversion can round a scroll-dependent edge by a fraction of a point.
+            let size = snapshot.unclippedViewport.size
+            return abs(size.width - viewportSize.width) < 0.5 && abs(size.height - viewportSize.height) < 0.5
+        }
     }
     private var drag: Drag?
     override var isFlipped: Bool { true }
@@ -34,9 +41,7 @@ final class CanvasMiniMapInputView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func configure(overview: CanvasOverviewState, snapshot: CanvasOverviewSnapshot?) {
-        if self.overview !== overview || self.snapshot?.bounds != snapshot?.bounds
-            || self.snapshot?.viewport.size != snapshot?.viewport.size
-        {
+        if self.overview !== overview || drag.map({ !$0.matches(snapshot) }) == true {
             drag = nil
         }
         self.overview = overview
@@ -66,10 +71,11 @@ final class CanvasMiniMapInputView: NSView {
         let inside = projection.project(snapshot.viewport).contains(point)
         let anchor =
             inside
-            ? CGPoint(x: canvasPoint.x - snapshot.viewport.minX, y: canvasPoint.y - snapshot.viewport.minY)
-            : CGPoint(x: snapshot.viewport.width / 2, y: snapshot.viewport.height / 2)
+            ? CGPoint(
+                x: canvasPoint.x - snapshot.unclippedViewport.minX, y: canvasPoint.y - snapshot.unclippedViewport.minY)
+            : CGPoint(x: snapshot.unclippedViewport.width / 2, y: snapshot.unclippedViewport.height / 2)
         drag = Drag(
-            sourceID: sourceID, canvasBounds: snapshot.bounds, viewportSize: snapshot.viewport.size,
+            sourceID: sourceID, canvasBounds: snapshot.bounds, viewportSize: snapshot.unclippedViewport.size,
             mapSize: bounds.size, projection: projection, anchor: anchor)
         if !inside { mouseDragged(with: event) }
         window?.invalidateCursorRects(for: self)
@@ -77,9 +83,7 @@ final class CanvasMiniMapInputView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         guard let drag, window != nil, let overview, overview.navigationID == drag.sourceID,
-            bounds.size == drag.mapSize, snapshot?.bounds == drag.canvasBounds,
-            snapshot?.viewport.size == drag.viewportSize,
-            overview.snapshot?.bounds == drag.canvasBounds, overview.snapshot?.viewport.size == drag.viewportSize,
+            bounds.size == drag.mapSize, drag.matches(snapshot), drag.matches(overview.snapshot),
             let point = drag.projection.unproject(convert(event.locationInWindow, from: nil))
         else {
             self.drag = nil

@@ -12,25 +12,38 @@ enum PaneRouteSearch {
         let outside: CGPoint
     }
 
-    static func points(source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect) -> [CGPoint]? {
+    static func points(
+        source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect,
+        sourceDock: GlassBallDock? = nil, targetDock: GlassBallDock? = nil
+    ) -> [CGPoint]? {
         guard valid(source), valid(target), valid(bounds), obstacles.count <= maximumObstacles else { return nil }
         let obstacles = obstacles.filter(valid)
         let direct = PaneConnectionRoute(source: source, target: target).points
-        if directIsClear(
-            direct, source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: preferredClearance)
+        let matchesDocks =
+            (sourceDock == nil || direct.first == sourceDock?.point(in: source))
+            && (targetDock == nil || direct.last == targetDock?.point(in: target))
+        if matchesDocks
+            && directIsClear(
+                direct, source: source, target: target, obstacles: obstacles, bounds: bounds,
+                clearance: preferredClearance)
         {
             return direct
         }
         if let spaced = search(
-            source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: preferredClearance)
+            source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: preferredClearance,
+            sourceDock: sourceDock, targetDock: targetDock)
         {
             return spaced
         }
         // Preserve the old visible connection when windows/canvas leave no room for a wider gutter.
-        if directIsClear(direct, source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: 0) {
+        if matchesDocks
+            && directIsClear(direct, source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: 0)
+        {
             return direct
         }
-        return search(source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: compactClearance)
+        return search(
+            source: source, target: target, obstacles: obstacles, bounds: bounds, clearance: compactClearance,
+            sourceDock: sourceDock, targetDock: targetDock)
     }
 
     private static func directIsClear(
@@ -54,13 +67,14 @@ enum PaneRouteSearch {
     }
 
     private static func search(
-        source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect, clearance: CGFloat
+        source: CGRect, target: CGRect, obstacles: [CGRect], bounds: CGRect, clearance: CGFloat,
+        sourceDock: GlassBallDock?, targetDock: GlassBallDock?
     ) -> [CGPoint]? {
         let blocks = obstacles.map { $0.insetBy(dx: -clearance, dy: -clearance) }
-        let starts = ports(source, obstacles: obstacles, clearance: clearance).filter {
+        let starts = ports(source, obstacles: obstacles, clearance: clearance, dock: sourceDock).filter {
             free($0.outside, blocks: blocks, bounds: bounds)
         }
-        let ends = ports(target, obstacles: obstacles, clearance: clearance).filter {
+        let ends = ports(target, obstacles: obstacles, clearance: clearance, dock: targetDock).filter {
             free($0.outside, blocks: blocks, bounds: bounds)
         }
         guard !starts.isEmpty, !ends.isEmpty else { return nil }
@@ -126,9 +140,15 @@ enum PaneRouteSearch {
         return nil
     }
 
-    private static func ports(_ frame: CGRect, obstacles: [CGRect], clearance: CGFloat) -> [Port] {
+    private static func ports(_ frame: CGRect, obstacles: [CGRect], clearance: CGFloat, dock: GlassBallDock?) -> [Port]
+    {
         var result: [Port] = []
         let neighbors = obstacles.filter { $0 != frame }.map { $0.insetBy(dx: -clearance, dy: -clearance) }
+        if let dock {
+            let port = Port(edge: dock.point(in: frame), outside: dock.outside(frame, distance: clearance))
+            guard !neighbors.contains(where: { crosses(port.edge, port.outside, interior: $0) }) else { return [] }
+            return [port]
+        }
         // Midpoints of exposed edge intervals also work when another window covers a normal midpoint.
         for vertical in [true, false] {
             for far in [false, true] {

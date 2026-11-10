@@ -20,6 +20,7 @@ struct BrowserPaneView: View {
 private struct BrowserInner: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.isGlassBallCollapsed) private var collapsed
+    @Environment(\.isGlassBallTransitioning) private var transitioning
     @ObservedObject var controller: BrowserController
     let session: ManagedSession
 
@@ -66,7 +67,7 @@ private struct BrowserInner: View {
                 webView: controller.webView,
                 zoom: store.browserZoomOverride(for: session),
                 focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
-                    && store.settings.workspaceMode == .sessions, collapsed: collapsed)
+                    && store.settings.workspaceMode == .sessions, collapsed: collapsed, transitioning: transitioning)
         }
     }
 }
@@ -76,6 +77,7 @@ struct WebViewRepresentable: NSViewRepresentable {
     var zoom: Double? = nil
     let focused: Bool
     var collapsed = false
+    var transitioning = false
 
     func makeNSView(context: Context) -> BrowserContainerView {
         let c = BrowserContainerView()
@@ -91,6 +93,7 @@ struct WebViewRepresentable: NSViewRepresentable {
         for case let view as FocusProtectedWebView in c.subviews {
             view.allowsKeyboardFocus = false
             view.isHidden = false
+            view.autoresizingMask = [.width, .height]
             view.removeFromSuperview()
         }
     }
@@ -106,6 +109,12 @@ struct WebViewRepresentable: NSViewRepresentable {
             c.addSubview(webView)
         }
         c.focusWhenAttached = focused
+        if transitioning || collapsed {
+            webView.autoresizingMask = []
+        } else if webView.autoresizingMask.isEmpty {
+            webView.frame = c.bounds
+            webView.autoresizingMask = [.width, .height]
+        }
         c.focusBrowserIfNeeded()
     }
 }

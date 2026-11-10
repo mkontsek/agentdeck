@@ -9,6 +9,8 @@ struct PaneGridView: View {
     var body: some View {
         GeometryReader { geometry in
             let frames = store.paneFrames(in: geometry.size)
+            let routeFrames = movedFrames(frames)
+            let docks = store.glassBallDocks(in: routeFrames)
             let maximizedPaneID = store.session(store.maximizedSessionID)?.paneID
             let extent =
                 store.maximizedSessionID == nil
@@ -21,7 +23,7 @@ struct PaneGridView: View {
                         Color.clear.frame(width: 1, height: 1).id("pane-origin")
                         CanvasScrollObserver(
                             store: store,
-                            frames: connectionFrames(frames).filter {
+                            frames: displayedFrames(routeFrames, docks: docks).filter {
                                 maximizedPaneID == nil || $0.key == maximizedPaneID
                             },
                             focusedPaneID: store.pane(containing: store.focusedSessionID)?.id
@@ -43,7 +45,8 @@ struct PaneGridView: View {
                         if store.maximizedSessionID == nil {
                             PaneConnectionsView(
                                 connections: store.paneConnections,
-                                frames: connectionFrames(frames),
+                                frames: routeFrames,
+                                docks: store.settings.glassBallSubagents && !store.isDemoMode ? docks : [:],
                                 color: CanvasArrowColor.color(hex: store.settings.arrowColorHex)
                             )
                             .frame(width: extent.width, height: extent.height)
@@ -58,6 +61,7 @@ struct PaneGridView: View {
                                 pane: pane, size: PaneSize(width: frame.width, height: frame.height),
                                 mode: paneMode(frame: frame),
                                 collapsed: store.collapsesToGlassBall(pane),
+                                dock: docks[pane.id] ?? .left,
                                 onResizeBegin: { store.detachGridForResize(frames: frames) },
                                 onMove: { offset in movingPanes[pane.id] = offset }
                             )
@@ -101,7 +105,7 @@ struct PaneGridView: View {
         store.updateCanvasViewport(size)
     }
 
-    private func connectionFrames(_ frames: [UUID: CGRect]) -> [UUID: CGRect] {
+    private func movedFrames(_ frames: [UUID: CGRect]) -> [UUID: CGRect] {
         var result = frames
         for (id, offset) in movingPanes {
             guard let frame = frames[id] else { continue }
@@ -109,9 +113,14 @@ struct PaneGridView: View {
                 x: max(0, frame.minX + offset.width), y: max(0, frame.minY + offset.height),
                 width: frame.width, height: frame.height)
         }
+        return result
+    }
+
+    private func displayedFrames(_ frames: [UUID: CGRect], docks: [UUID: GlassBallDock]) -> [UUID: CGRect] {
+        var result = frames
         for pane in store.panes where store.collapsesToGlassBall(pane) {
-            if let frame = result[pane.id] {
-                result[pane.id] = CGRect(origin: frame.origin, size: GlassBallStatus.compactSize)
+            if let frame = frames[pane.id] {
+                result[pane.id] = (docks[pane.id] ?? .left).compactFrame(in: frame)
             }
         }
         return result
@@ -145,6 +154,7 @@ struct PaneView: View {
     let size: PaneSize
     let mode: PaneMode
     var collapsed = false
+    var dock: GlassBallDock = .left
     var onResizeBegin: () -> Void = {}
     var onMove: (CGSize?) -> Void = { _ in }
     @State private var moveOffset: CGSize = .zero
@@ -233,14 +243,17 @@ struct PaneView: View {
             CGPoint(x: max(0, mode.position.x + moveOffset.width), y: max(0, mode.position.y + moveOffset.height))
         }()
         GlassBallTransitionView(
-            collapsed: collapsed, size: CGSize(width: size.width, height: size.height), reduceMotion: reduceMotion
+            collapsed: collapsed, size: CGSize(width: size.width, height: size.height), reduceMotion: reduceMotion,
+            dock: dock
         ) {
             pane
         } ball: {
             if let owner = store.glassBallOwner(in: self.pane) {
-                GlassBallView(name: owner.name, status: store.glassBallStatus(for: owner), reduceMotion: reduceMotion) {
-                    store.focusSession(owner.id)
-                }
+                GlassBallView(
+                    name: owner.name, status: store.glassBallStatus(for: owner), reduceMotion: reduceMotion,
+                    onOpen: {
+                        store.focusSession(owner.id)
+                    }, dock: dock, isPresented: collapsed)
             }
         }
         .offset(x: origin.x, y: origin.y)
