@@ -49,7 +49,7 @@ final class CanvasScrollObservationView: NSView {
     private func connect() {
         guard observer == nil, window != nil, let scroll = enclosingScrollView else { return }
         scrollView = scroll
-        overviewSourceID = store?.canvasOverview.attach()
+        overviewSourceID = store?.canvasOverview.attach { [weak self] origin in self?.moveViewport(to: origin) }
         scroll.contentView.postsBoundsChangedNotifications = true
         observer = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
@@ -108,6 +108,17 @@ final class CanvasScrollObservationView: NSView {
                 !hasKeyboardFocus
                 && (!attached || !inMaximizedPane || !visible.intersects(frame) || isInteracting)
         }
+    }
+
+    private func moveViewport(to origin: CGPoint) {
+        guard let store, store.settings.workspaceMode == .sessions, store.maximizedSessionID == nil,
+            let scroll = scrollView, window != nil, enclosingScrollView === scroll
+        else { return }
+        let clip = scroll.contentView
+        let proposed = CGRect(origin: origin, size: clip.bounds.size)
+        clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
+        scroll.reflectScrolledClipView(clip)
+        refreshVisibility()
     }
 
     private func scheduleOverviewRefresh() {

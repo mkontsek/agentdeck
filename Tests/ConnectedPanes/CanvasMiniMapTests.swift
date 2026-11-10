@@ -22,6 +22,10 @@ final class CanvasMiniMapTests: XCTestCase {
             XCTAssertEqual((visible.minY - canvas.minY) / canvas.height, 0.25, accuracy: 0.001)
             XCTAssertEqual(visible.width / canvas.width, 1.0 / 3, accuracy: 0.001)
             XCTAssertTrue(canvas.contains(projection.project(pane)))
+            let projected = projection.project(viewport).origin
+            XCTAssertEqual(projection.unproject(projected)?.x ?? -1, viewport.minX, accuracy: 0.001)
+            XCTAssertEqual(projection.unproject(projected)?.y ?? -1, viewport.minY, accuracy: 0.001)
+            XCTAssertNil(projection.unproject(CGPoint(x: CGFloat.infinity, y: 0)))
         }
         XCTAssertNil(CanvasOverviewProjection(bounds: .zero, size: CGSize(width: 200, height: 104)))
         XCTAssertNil(CanvasOverviewProjection(bounds: bounds, size: .zero))
@@ -87,8 +91,12 @@ final class CanvasMiniMapTests: XCTestCase {
         store.runtime[first.id]?.isRunning = true
         let terminal = store.terminals.makeView(for: first.id, font: store.font(for: first))
         let host = NSHostingView(rootView: fixture(store, scheme: .dark))
+        let surface = NSView(frame: window.contentLayoutRect)
+        host.frame = surface.bounds
+        host.autoresizingMask = [.width, .height]
+        surface.addSubview(host)
         window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = host
+        window.contentView = surface
         window.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertTrue(window.makeFirstResponder(terminal))
@@ -105,8 +113,30 @@ final class CanvasMiniMapTests: XCTestCase {
             workspaceSubscription.cancel()
             mapSubscription.cancel()
         }
-        scroll.contentView.scroll(to: CGPoint(x: 600, y: 300))
-        scroll.reflectScrolledClipView(scroll.contentView)
+        let map = try XCTUnwrap(descendants(host).compactMap { $0 as? CanvasMiniMapInputView }.first)
+        let projection = try XCTUnwrap(CanvasOverviewProjection(bounds: original.bounds, size: map.bounds.size))
+        let viewRect = projection.project(original.viewport)
+        let start = map.convert(CGPoint(x: viewRect.midX, y: viewRect.midY), to: nil)
+        XCTAssertTrue(host.hitTest(surface.convert(start, from: nil)) === map)
+        let editor = NSTextView(frame: CGRect(x: 300, y: 20, width: 180, height: 40))
+        surface.addSubview(editor)
+        editor.string = "Partial Ω\nmap fixture"
+        editor.setSelectedRange(NSRange(location: 2, length: 5))
+        editor.setMarkedText(
+            "žluť", selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0))
+        let draft = editor.string
+        let selection = editor.selectedRange()
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        window.sendEvent(try mouse(.leftMouseDown, at: start, window: window))
+        XCTAssertEqual(
+            scroll.documentVisibleRect.origin, original.viewport.origin, "Grabbing the viewport must not jump")
+        for delta in [CGPoint(x: 15, y: -8), CGPoint(x: 30, y: -16)] {
+            window.sendEvent(
+                try mouse(.leftMouseDragged, at: CGPoint(x: start.x + delta.x, y: start.y + delta.y), window: window))
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        window.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: start.x + 30, y: start.y - 16), window: window))
         try await Task.sleep(for: .milliseconds(180))
         let scrolled = try XCTUnwrap(store.canvasOverview.snapshot)
         XCTAssertEqual(scrolled.viewport, scroll.documentVisibleRect.intersection(scrolled.bounds))
@@ -116,8 +146,13 @@ final class CanvasMiniMapTests: XCTestCase {
         XCTAssertEqual(scrolled.panes, original.panes)
         XCTAssertGreaterThan(mapPublications, 0)
         XCTAssertEqual(workspacePublications, 0, "Scrolling must not invalidate all terminal panes")
-        XCTAssertTrue(window.firstResponder === terminal)
+        XCTAssertTrue(window.firstResponder === editor)
+        XCTAssertEqual(editor.string, draft)
+        XCTAssertEqual(editor.selectedRange(), selection)
+        XCTAssertTrue(editor.hasMarkedText())
         XCTAssertEqual(store.focusedSessionID, first.id)
+        editor.removeFromSuperview()
+        XCTAssertTrue(window.makeFirstResponder(terminal))
         try save(host, name: "agentdeck-canvas-map-dark")
 
         let last = try XCTUnwrap(store.sessions.last)
@@ -134,6 +169,18 @@ final class CanvasMiniMapTests: XCTestCase {
         XCTAssertGreaterThan(resized.viewport.width, scrolled.viewport.width)
         XCTAssertTrue(window.firstResponder === terminal)
         try save(host, name: "agentdeck-canvas-map-light")
+
+        // Clicking outside the viewport centers navigation and clamps to the actual scrollable document.
+        let edge = map.convert(CGPoint(x: map.bounds.maxX - 2, y: map.bounds.maxY - 2), to: nil)
+        window.sendEvent(try mouse(.leftMouseDown, at: edge, window: window))
+        window.sendEvent(try mouse(.leftMouseUp, at: edge, window: window))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThan(scroll.documentVisibleRect.minX, resized.viewport.minX)
+        XCTAssertGreaterThanOrEqual(scroll.documentVisibleRect.minY, 0)
+        let documentBounds = try XCTUnwrap(scroll.documentView?.bounds)
+        XCTAssertLessThanOrEqual(scroll.documentVisibleRect.maxX, documentBounds.maxX + 1)
+        XCTAssertLessThanOrEqual(scroll.documentVisibleRect.maxY, documentBounds.maxY + 1)
+        XCTAssertTrue(window.firstResponder === terminal)
 
         store.maximizedSessionID = first.id
         try await Task.sleep(for: .milliseconds(400))
@@ -163,6 +210,65 @@ final class CanvasMiniMapTests: XCTestCase {
     }
 
     private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+
+    func testMapRejectsStaleAttachmentAndGeometryChangesDuringDrag() throws {
+        let state = CanvasOverviewState()
+        let snapshot = try XCTUnwrap(
+            CanvasOverviewSnapshot(
+                bounds: CGRect(x: 0, y: 0, width: 2000, height: 1000),
+                viewport: CGRect(x: 0, y: 0, width: 500, height: 400), panes: [:], focusedPaneID: nil))
+        var originalCalls = 0
+        var replacementCalls = 0
+        let first = state.attach { _ in originalCalls += 1 }
+        state.update(snapshot, from: first)
+        let map = CanvasMiniMapInputView(frame: CGRect(x: 0, y: 0, width: 240, height: 104))
+        map.configure(overview: state, snapshot: snapshot)
+        let window = NSWindow(contentRect: map.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = map
+        defer { window.close() }
+        let projection = try XCTUnwrap(CanvasOverviewProjection(bounds: snapshot.bounds, size: map.bounds.size))
+        let rect = projection.project(snapshot.viewport)
+        let point = map.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil)
+        map.mouseDown(with: try mouse(.leftMouseDown, at: point, window: window))
+        let second = state.attach { _ in replacementCalls += 1 }
+        state.moveViewport(to: .zero, from: first)
+        XCTAssertNil(state.navigationID, "Replacement cannot navigate using an older snapshot")
+        state.update(snapshot, from: second)
+        map.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: point.x + 30, y: point.y), window: window))
+        XCTAssertEqual(originalCalls, 0)
+        XCTAssertEqual(replacementCalls, 0)
+        // Equal geometry need not republish the map; a fresh gesture must still bind to the replacement.
+        map.mouseDown(with: try mouse(.leftMouseDown, at: point, window: window))
+        map.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: point.x + 30, y: point.y), window: window))
+        XCTAssertEqual(replacementCalls, 1)
+        replacementCalls = 0
+        map.configure(overview: state, snapshot: snapshot)
+        map.mouseDown(with: try mouse(.leftMouseDown, at: point, window: window))
+        map.setFrameSize(CGSize(width: 300, height: 104))
+        map.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: point.x + 30, y: point.y), window: window))
+        XCTAssertEqual(replacementCalls, 0)
+        map.setFrameSize(CGSize(width: 240, height: 104))
+        map.mouseDown(with: try mouse(.leftMouseDown, at: point, window: window))
+        let resized = try XCTUnwrap(
+            CanvasOverviewSnapshot(
+                bounds: CGRect(x: 0, y: 0, width: 2200, height: 1000),
+                viewport: snapshot.viewport, panes: [:], focusedPaneID: nil))
+        state.update(resized, from: second)
+        map.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: point.x + 30, y: point.y), window: window))
+        XCTAssertEqual(replacementCalls, 0, "79-M1: live geometry changed before representable update must cancel drag")
+        replacementCalls = 0
+        state.detach(second)
+        state.moveViewport(to: .zero, from: second)
+        XCTAssertEqual(replacementCalls, 0)
+    }
+
+    private func mouse(_ type: NSEvent.EventType, at point: CGPoint, window: NSWindow) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    }
 
     private func save(_ host: NSView, name: String) throws {
         host.layoutSubtreeIfNeeded()

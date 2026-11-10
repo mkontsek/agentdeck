@@ -39,6 +39,7 @@ struct CanvasOverviewProjection {
         else { return nil }
         self.bounds = bounds
         scale = min((size.width - inset * 2) / bounds.width, (size.height - inset * 2) / bounds.height)
+        guard scale.isFinite, scale > 0 else { return nil }
         origin = CGPoint(x: (size.width - bounds.width * scale) / 2, y: (size.height - bounds.height * scale) / 2)
     }
 
@@ -47,5 +48,12 @@ struct CanvasOverviewProjection {
             x: origin.x + (rect.minX - bounds.minX) * scale,
             y: origin.y + (rect.minY - bounds.minY) * scale,
             width: rect.width * scale, height: rect.height * scale)
+    }
+
+    func unproject(_ point: CGPoint) -> CGPoint? {
+        let result = CGPoint(
+            x: bounds.minX + (point.x - origin.x) / scale,
+            y: bounds.minY + (point.y - origin.y) / scale)
+        return result.x.isFinite && result.y.isFinite ? result : nil
     }
 }

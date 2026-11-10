@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct GlassBallView: View {
@@ -41,7 +40,7 @@ struct GlassBallView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(name) · \(status.label). Hover to expand; select to keep open while focused.")
+        .help("\(name) · \(status.label). Click to expand; select another window to collapse.")
         .accessibilityLabel("\(name), \(status.label)")
         .accessibilityHint("Open subagent mini-window")
         .onAppear { updatePulse() }
@@ -55,41 +54,4 @@ struct GlassBallView: View {
             withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
         }
     }
-}
-
-/// A passive tracking region; entering never changes keyboard focus or session selection.
-struct GlassBallHoverRegion: NSViewRepresentable {
-    let paneID: UUID
-    let onHover: (Bool) -> Void
-
-    func makeNSView(context: Context) -> GlassBallHoverView {
-        let view = GlassBallHoverView()
-        view.paneID = paneID
-        view.onHover = onHover
-        return view
-    }
-
-    func updateNSView(_ view: GlassBallHoverView, context: Context) {
-        view.paneID = paneID
-        view.onHover = onHover
-    }
-}
-
-final class GlassBallHoverView: NSView {
-    var paneID = UUID()
-    var onHover: (Bool) -> Void = { _ in }
-    private var area: NSTrackingArea?
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let area { removeTrackingArea(area) }
-        let next = NSTrackingArea(
-            rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(next)
-        area = next
-    }
-
-    override func mouseEntered(with event: NSEvent) { if window != nil { onHover(true) } }
-    override func mouseExited(with event: NSEvent) { if window != nil { onHover(false) } }
 }

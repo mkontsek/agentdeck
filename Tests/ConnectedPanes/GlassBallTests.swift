@@ -17,11 +17,10 @@ final class GlassBallTests: XCTestCase {
         child.parentSessionID = parent.id
         child = store.addSession(child, start: false, focus: false)
         let pane = try XCTUnwrap(store.pane(containing: child.id))
-        XCTAssertFalse(store.collapsesToGlassBall(pane, hovered: false))
+        XCTAssertFalse(store.collapsesToGlassBall(pane))
         store.settings.glassBallSubagents = true
-        XCTAssertTrue(store.collapsesToGlassBall(pane, hovered: false))
-        XCTAssertFalse(store.collapsesToGlassBall(pane, hovered: true))
-        XCTAssertFalse(store.collapsesToGlassBall(try XCTUnwrap(store.pane(containing: parent.id)), hovered: false))
+        XCTAssertTrue(store.collapsesToGlassBall(pane))
+        XCTAssertFalse(store.collapsesToGlassBall(try XCTUnwrap(store.pane(containing: parent.id))))
         store.runtime[child.id]?.status = .idle
         XCTAssertEqual(store.glassBallStatus(for: child), .idle, "Idle alone does not prove success")
         store.runtime[child.id]?.status = .working
@@ -35,7 +34,9 @@ final class GlassBallTests: XCTestCase {
         store.runtime[child.id]?.status = .error
         XCTAssertEqual(store.glassBallStatus(for: child), .attention)
         store.focusSession(child.id)
-        XCTAssertFalse(store.collapsesToGlassBall(pane, hovered: false), "Typing target stays expanded")
+        XCTAssertFalse(store.collapsesToGlassBall(pane), "Typing target stays expanded")
+        store.collapseToGlassBall(child.id)
+        XCTAssertTrue(store.collapsesToGlassBall(pane), "Explicit collapse returns the ball")
         store.saveNow()
         let restored = AppStore(stateURL: url)
         defer { restored.shutdown() }
@@ -43,7 +44,7 @@ final class GlassBallTests: XCTestCase {
         XCTAssertFalse(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).glassBallSubagents)
     }
 
-    func testNativeHoverRetainsHostsAndFocusWhileCollapsedOutputSkipsPainting() async throws {
+    func testNativeClickNotHoverOpensRetainedHostsAndCollapsedOutputSkipsPainting() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = AppStore(stateURL: directory.appendingPathComponent("state.json"))
         store.settings.workspaceMode = .sessions
@@ -88,15 +89,19 @@ final class GlassBallTests: XCTestCase {
         let webContainer = try XCTUnwrap(browser.webView.superview)
         let originalSize = store.session(child.id)?.paneSize
         let originalPosition = store.session(child.id)?.canvasPosition
+        let nativeSize = terminal.bounds.size
         store.settings.glassBallSubagents = true
-        try await Task.sleep(for: .milliseconds(200))
+        for _ in 0..<200 where !terminal.isHidden { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(terminal.isHidden && terminal.defersGlassBallDisplay)
         XCTAssertTrue(browser.webView.isHidden)
         XCTAssertTrue(window.firstResponder === parentTerminal)
-        let hover = try XCTUnwrap(
-            descendants(host).compactMap { $0 as? GlassBallHoverView }.first { $0.paneID == child.paneID })
-        XCTAssertEqual(hover.bounds.size, GlassBallStatus.compactSize)
         XCTAssertEqual(store.canvasOverview.snapshot?.panes[child.paneID]?.size, GlassBallStatus.compactSize)
+        let document = try XCTUnwrap(terminal.enclosingScrollView?.documentView)
+        let point = document.convert(CGPoint(x: 500, y: 60), to: nil)
+        window.sendEvent(try mouse(.mouseMoved, at: point, window: window))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(terminal.isHidden, "Hover must never open a ball")
+        XCTAssertTrue(window.firstResponder === parentTerminal)
         let renders = terminal.diagnostics.renders
         let bytes = terminal.diagnostics.bytesFed
         let output = "\r\nhidden-Ω-output"
@@ -110,37 +115,30 @@ final class GlassBallTests: XCTestCase {
         print(
             "GLASS_BALL collapsedBytes=\(terminal.diagnostics.bytesFed - bytes) collapsedRenders=\(terminal.diagnostics.renders - renders)"
         )
-        let event = try XCTUnwrap(
-            NSEvent.enterExitEvent(
-                with: .mouseEntered, location: .zero, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: 1, trackingNumber: 0, userData: nil))
-        hover.mouseEntered(with: event)
-        try await Task.sleep(for: .milliseconds(200))
+        window.sendEvent(try mouse(.leftMouseDown, at: point, window: window))
+        window.sendEvent(try mouse(.leftMouseUp, at: point, window: window))
+        try await Task.sleep(for: .milliseconds(350))
         XCTAssertFalse(terminal.isHidden || terminal.defersGlassBallDisplay)
         XCTAssertFalse(browser.webView.isHidden)
         XCTAssertTrue(terminal.superview === container)
         XCTAssertTrue(browser.webView.superview === webContainer)
-        XCTAssertTrue(window.firstResponder === parentTerminal, "Hover must not change typing focus")
-        XCTAssertEqual(store.focusedSessionID, parent.id)
+        XCTAssertTrue(window.firstResponder === terminal, "An explicit ball click opens and focuses its worker")
+        XCTAssertEqual(store.focusedSessionID, child.id)
+        XCTAssertEqual(terminal.bounds.size, nativeSize, "The transition must not resize the PTY")
         for _ in 0..<200 where terminal.diagnostics.renders == renders { try await Task.sleep(for: .milliseconds(5)) }
         print(
             "GLASS_BALL expandedRenders=\(terminal.diagnostics.renders - renders) canvasDeferred=\(terminal.defersCanvasDisplay) hidden=\(terminal.isHiddenOrHasHiddenAncestor) frame=\(terminal.convert(terminal.bounds, to: host)) visible=\(terminal.visibleRect)"
         )
         XCTAssertGreaterThan(terminal.diagnostics.renders, renders)
         XCTAssertTrue(store.terminals.visibleLines(id: child.id).joined().contains("hidden-Ω-output"))
-        hover.mouseExited(with: event)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertTrue(terminal.isHidden)
-        store.focusSession(child.id)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertFalse(terminal.isHidden)
-        XCTAssertTrue(window.firstResponder === terminal, "Explicit selection opens and focuses a collapsed worker")
-        hover.mouseExited(with: event)
+        window.sendEvent(try mouse(.mouseMoved, at: .zero, window: window))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(terminal.isHidden, "A focused typing window remains expanded after pointer exit")
         store.focusSession(parent.id)
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(terminal.isHidden, "Keep retained native content visible until collapse finishes")
+        XCTAssertEqual(terminal.bounds.size, nativeSize)
+        for _ in 0..<200 where !terminal.isHidden { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(terminal.isHidden)
         store.settings.glassBallSubagents = false
         try await Task.sleep(for: .milliseconds(150))
@@ -180,4 +178,12 @@ final class GlassBallTests: XCTestCase {
     }
 
     private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+
+    private func mouse(_ type: NSEvent.EventType, at point: CGPoint, window: NSWindow) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1))
+    }
 }

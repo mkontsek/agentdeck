@@ -186,7 +186,7 @@ struct ContentView: View {
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Toggle("Glass balls", isOn: $store.settings.glassBallSubagents)
-                .help("Collapse unfocused subagents into status balls. Hover to expand; focused windows stay open.")
+                .help("Collapse unfocused subagents into status balls. Click to expand; focused windows stay open.")
                 .accessibilityIdentifier("glass-ball-subagents")
             Toggle("Demo mode", isOn: Binding(get: { store.isDemoMode }, set: { store.setDemoMode($0) }))
                 .help("Replace live content and identifiers with synthetic content for screenshots")

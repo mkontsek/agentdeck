@@ -5,7 +5,6 @@ struct PaneGridView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var movingPanes: [UUID: CGSize] = [:]
-    @State private var hoveredPanes: Set<UUID> = []
 
     var body: some View {
         GeometryReader { geometry in
@@ -58,10 +57,7 @@ struct PaneGridView: View {
                             PaneView(
                                 pane: pane, size: PaneSize(width: frame.width, height: frame.height),
                                 mode: paneMode(frame: frame),
-                                collapsed: store.collapsesToGlassBall(pane, hovered: hoveredPanes.contains(pane.id)),
-                                onHover: { entered in
-                                    if entered { hoveredPanes.insert(pane.id) } else { hoveredPanes.remove(pane.id) }
-                                },
+                                collapsed: store.collapsesToGlassBall(pane),
                                 onResizeBegin: { store.detachGridForResize(frames: frames) },
                                 onMove: { offset in movingPanes[pane.id] = offset }
                             )
@@ -73,7 +69,7 @@ struct PaneGridView: View {
                             .zIndex(
                                 visible && store.maximizedSessionID != nil
                                     ? 1_000_000
-                                    : (hoveredPanes.contains(pane.id) ? 999_999 : Double(pane.activeSession.zIndex))
+                                    : Double(pane.activeSession.zIndex)
                             )
                             .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
                         }
@@ -81,7 +77,6 @@ struct PaneGridView: View {
                 }
                 .scrollDisabled(store.maximizedSessionID != nil)
                 .onChange(of: store.maximizedSessionID) { _, id in
-                    hoveredPanes.removeAll()
                     if id != nil { proxy.scrollTo("pane-origin", anchor: .topLeading) }
                 }
                 .onChange(of: store.settings.layoutMode) { _, mode in
@@ -98,9 +93,6 @@ struct PaneGridView: View {
             }
             .onChange(of: geometry.size) { _, size in updateViewport(size) }
             .onChange(of: store.panes.count) { _, _ in updateViewport(geometry.size) }
-            .onChange(of: store.settings.glassBallSubagents) { _, _ in hoveredPanes.removeAll() }
-            .onChange(of: store.settings.workspaceMode) { _, _ in hoveredPanes.removeAll() }
-            .onChange(of: store.panes.map(\.id)) { _, ids in hoveredPanes.formIntersection(ids) }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
     }
@@ -117,7 +109,7 @@ struct PaneGridView: View {
                 x: max(0, frame.minX + offset.width), y: max(0, frame.minY + offset.height),
                 width: frame.width, height: frame.height)
         }
-        for pane in store.panes where store.collapsesToGlassBall(pane, hovered: hoveredPanes.contains(pane.id)) {
+        for pane in store.panes where store.collapsesToGlassBall(pane) {
             if let frame = result[pane.id] {
                 result[pane.id] = CGRect(origin: frame.origin, size: GlassBallStatus.compactSize)
             }
@@ -153,7 +145,6 @@ struct PaneView: View {
     let size: PaneSize
     let mode: PaneMode
     var collapsed = false
-    var onHover: (Bool) -> Void = { _ in }
     var onResizeBegin: () -> Void = {}
     var onMove: (CGSize?) -> Void = { _ in }
     @State private var moveOffset: CGSize = .zero
@@ -189,8 +180,7 @@ struct PaneView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: size.width, height: size.height)
-        .environment(\.isGlassBallCollapsed, collapsed)
-        .opacity(store.isDemoMode || collapsed ? 0 : 1)
+        .opacity(store.isDemoMode ? 0 : 1)
         .allowsHitTesting(!store.isDemoMode && !collapsed)
         .accessibilityHidden(store.isDemoMode || collapsed)
         .overlay {
@@ -242,23 +232,15 @@ struct PaneView: View {
         let origin: CGPoint = {
             CGPoint(x: max(0, mode.position.x + moveOffset.width), y: max(0, mode.position.y + moveOffset.height))
         }()
-        ZStack(alignment: .topLeading) {
-            pane.opacity(collapsed ? 0 : 1).allowsHitTesting(!collapsed).accessibilityHidden(collapsed)
-            if collapsed, let owner = store.glassBallOwner(in: self.pane) {
+        GlassBallTransitionView(
+            collapsed: collapsed, size: CGSize(width: size.width, height: size.height), reduceMotion: reduceMotion
+        ) {
+            pane
+        } ball: {
+            if let owner = store.glassBallOwner(in: self.pane) {
                 GlassBallView(name: owner.name, status: store.glassBallStatus(for: owner), reduceMotion: reduceMotion) {
                     store.focusSession(owner.id)
                 }
-            }
-        }
-        .frame(
-            width: collapsed ? GlassBallStatus.compactSize.width : size.width,
-            height: collapsed ? GlassBallStatus.compactSize.height : size.height, alignment: .topLeading
-        )
-        .overlay {
-            if store.settings.glassBallSubagents && store.glassBallOwner(in: self.pane) != nil && !store.isDemoMode
-                && store.maximizedSessionID == nil && store.settings.workspaceMode == .sessions
-            {
-                GlassBallHoverRegion(paneID: self.pane.id, onHover: onHover).accessibilityHidden(true)
             }
         }
         .offset(x: origin.x, y: origin.y)
@@ -381,6 +363,10 @@ struct PaneHeader: View {
         }
         Button(store.maximizedSessionID == nil ? "Maximize" : "Restore panes") {
             store.toggleMaximize(session.id)
+        }
+        if store.settings.glassBallSubagents, let owner = store.browserOwner(for: session), owner.parentSessionID != nil
+        {
+            Button("Collapse to glass ball") { store.collapseToGlassBall(session.id) }
         }
         if movable {
             Button("Bring to front") { store.raisePane(session.id) }

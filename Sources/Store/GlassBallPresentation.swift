@@ -6,9 +6,17 @@ extension AppStore {
         return owner
     }
 
-    func collapsesToGlassBall(_ pane: SessionPane, hovered: Bool) -> Bool {
-        settings.glassBallSubagents && !isDemoMode && maximizedSessionID == nil && !hovered
+    func collapsesToGlassBall(_ pane: SessionPane) -> Bool {
+        settings.glassBallSubagents && !isDemoMode && maximizedSessionID == nil
             && !pane.tabs.contains { $0.id == focusedSessionID } && glassBallOwner(in: pane) != nil
+    }
+
+    func collapseToGlassBall(_ id: UUID) {
+        guard settings.glassBallSubagents, !isDemoMode, let pane = pane(containing: id),
+            glassBallOwner(in: pane) != nil
+        else { return }
+        if pane.tabs.contains(where: { $0.id == maximizedSessionID }) { maximizedSessionID = nil }
+        if pane.tabs.contains(where: { $0.id == focusedSessionID }) { focusedSessionID = nil }
     }
 
     func glassBallStatus(for owner: ManagedSession) -> GlassBallStatus {

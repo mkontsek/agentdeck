@@ -33,20 +33,31 @@ struct CanvasMiniMapView: View {
             }
             .frame(height: 104)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+            .overlay { CanvasMiniMapInteraction(overview: overview, snapshot: snapshot) }
             .overlay {
                 if snapshot?.panes.isEmpty ?? true {
                     Text(snapshot == nil ? "Canvas unavailable" : "No windows")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary).allowsHitTesting(false)
                 }
             }
         }
         .padding(10)
         .background(Color(nsColor: .windowBackgroundColor))
-        .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isImage)
         .accessibilityLabel("Canvas map")
         .accessibilityValue(accessibilitySummary)
+        .accessibilityHint("Drag the viewport or click the map to navigate. Scroll actions pan the canvas.")
+        .accessibilityScrollAction { edge in
+            guard let snapshot = overview.snapshot, let id = overview.navigationID else { return }
+            var origin = snapshot.viewport.origin
+            switch edge {
+            case .leading: origin.x -= snapshot.viewport.width * 0.8
+            case .trailing: origin.x += snapshot.viewport.width * 0.8
+            case .top: origin.y -= snapshot.viewport.height * 0.8
+            case .bottom: origin.y += snapshot.viewport.height * 0.8
+            }
+            overview.moveViewport(to: origin, from: id)
+        }
         .accessibilityIdentifier("canvas-mini-map")
     }
 

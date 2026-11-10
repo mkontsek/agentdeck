@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-11-10: Click to expand glass balls and drag the canvas map
+
+The user replaced hover expansion with explicit click activation and asked for interactive map panning plus smooth transitions. Remove hover tracking entirely. Keep expansion tied to explicit session selection, and provide a Collapse to glass ball action. Use the shared 280 ms smooth, non-bouncing motion policy for workspace transitions; Reduce Motion settles directly. Keep native terminal geometry fixed while scaling/fading layers, and defer hiding until the current animation completes. A revision guard makes interruptions/reversals safe without a timer guessing when an animation ended.
+
+The map is now a navigation control. Preserve the pointer's grab offset inside the viewport and center on clicks outside it. Bind navigation to the observer and snapshot attachment; stale map gestures cannot move a replacement canvas. Native clip-view constraints clamp the target and direct dragging follows the pointer without a trailing animation. Keep focus/caret/selection untouched and avoid global AppStore publications during panning. This supersedes the November9 hover/passive-map decisions below. The animation audit keeps explicit workspace state changes on one policy; ongoing PTY output and direct manipulation are not implicitly animated.
+
 ## 2026-11-09: Collapse subagents into status glass balls
 
 The user requested a performance-saving glass-ball mode with hover expansion. Persist only the opt-in toggle; preserve the normal pane geometry and native resource identities. Hover is passive and transient. Keep focused panes expanded so pointer exit cannot hide a typing target; explicit sidebar, keyboard or ball selection opens the pane using the existing focus path.
