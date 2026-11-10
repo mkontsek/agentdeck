@@ -282,11 +282,11 @@ struct PaneHeader: View {
     private var focused: Bool { store.focusedSessionID == session.id }
 
     var body: some View {
-        let st = store.status(of: session.id)
+        let st = store.sessionDisplayStatus(for: session)
         HStack(spacing: 6) {
             HStack(spacing: 6) {
                 if movable { Image(systemName: "line.3.horizontal").font(.caption) }
-                Circle().fill(st.color).frame(width: 8, height: 8)
+                SessionStatusIndicator(status: st)
                 Image(systemName: session.kind.systemImage).foregroundStyle(.secondary).font(.caption)
                 Text(session.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 if session.isOrchestrator { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(.yellow) }
@@ -429,7 +429,7 @@ struct PaneStatsBar: View {
         let open = store.tasks.filter { $0.ownerSessionID == session.id && $0.status != .done }
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                chip(rt.status.systemImage, "\(rt.status.label) \(age(rt.statusSince, now))", color: rt.status.color)
+                chip(rt.status.systemImage, "Runtime: \(rt.status.label) \(age(rt.statusSince, now))")
                 if let s = rt.startedAt, rt.isRunning { chip("clock", "up \(age(s, now))") }
                 if session.kind == .cli {
                     if let m = rt.modelName { chip("cpu", m) }

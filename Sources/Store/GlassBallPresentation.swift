@@ -31,6 +31,11 @@ extension AppStore {
     }
 
     func glassBallStatus(for owner: ManagedSession) -> GlassBallStatus {
+        sessionDisplayStatus(for: owner)
+    }
+
+    func sessionDisplayStatus(for session: ManagedSession) -> GlassBallStatus {
+        let owner = browserOwner(for: session) ?? session
         let status = status(of: owner.id)
         let tasks = tasks.filter { $0.ownerSessionID == owner.id || $0.id == owner.delegatedTaskID }
         if [.waitingForUser, .stalled, .error, .quotaWarning].contains(status)

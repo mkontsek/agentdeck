@@ -58,7 +58,7 @@ struct CLIUsageProviderView: View {
             let sessions = store.sessions.filter { $0.kind == .cli && $0.cliProfileID == profile.id }
             ForEach(sessions) { session in
                 HStack {
-                    Circle().fill(store.status(of: session.id).color).frame(width: 6, height: 6)
+                    SessionStatusIndicator(status: store.sessionDisplayStatus(for: session), diameter: 6)
                     Button(session.name) {
                         store.selectTab(session.id)
                         store.settings.workspaceMode = .sessions

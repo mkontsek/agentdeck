@@ -10,7 +10,7 @@ struct SidebarView: View {
                 selection: Binding(
                     get: { store.focusedSessionID },
                     set: { id in
-                        if let id { store.selectTab(id) } else { store.focusedSessionID = nil }
+                        if let id { store.selectSidebarSession(id) } else { store.focusedSessionID = nil }
                     })
             ) {
                 Section("Sessions") {
@@ -28,6 +28,12 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .onKeyPress(.return) {
+                guard let id = store.focusedSessionID else { return .ignored }
+                store.focusSession(id)
+                return .handled
+            }
+            .accessibilityHint("Use Up and Down to select a session; Return focuses its terminal or browser.")
             .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: store.sessions.map(\.id))
             .animation(
                 WorkspaceMotion.animation(reduceMotion: reduceMotion),
@@ -99,8 +105,9 @@ struct SessionRow: View {
 
     var body: some View {
         let st = store.status(of: session.id)
+        let display = store.sessionDisplayStatus(for: session)
         HStack(spacing: 8) {
-            Circle().fill(st.color).frame(width: 9, height: 9)
+            SessionStatusIndicator(status: display, diameter: 9)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(session.name).fontWeight(.medium).lineLimit(1)
@@ -110,7 +117,7 @@ struct SessionRow: View {
                 }
                 HStack(spacing: 4) {
                     Image(systemName: session.kind.systemImage).font(.caption2)
-                    Text(st.label).font(.caption)
+                    Text(display.label).font(.caption)
                     if let q = store.runtime[session.id]?.pendingQuestion, st == .waitingForUser {
                         Text("· \(q)").font(.caption).lineLimit(1)
                     }

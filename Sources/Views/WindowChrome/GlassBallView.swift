@@ -9,14 +9,7 @@ struct GlassBallView: View {
     var isPresented = true
     @State private var pulse = false
 
-    private var color: Color {
-        switch status {
-        case .working: return .blue
-        case .attention: return .yellow
-        case .finished: return .green
-        case .idle: return .gray
-        }
-    }
+    private var color: Color { status.color }
 
     var body: some View {
         Button(action: onOpen) {

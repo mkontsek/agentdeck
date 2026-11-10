@@ -55,13 +55,13 @@ struct PaneTabBar: View {
 
     private func tabButton(_ tab: ManagedSession) -> some View {
         let selected = tab.id == pane.activeSession.id
-        let status = store.status(of: tab.id)
+        let status = store.sessionDisplayStatus(for: tab)
         return HStack(spacing: 0) {
             Button {
                 store.selectTab(tab.id)
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: tab.agentOwnerID != nil ? "globe" : status.systemImage)
+                    Image(systemName: tab.agentOwnerID != nil ? "globe" : status.symbol)
                         .foregroundStyle(status.color)
                         .accessibilityLabel(status.label)
                     Text(tab.name)

@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-11-10: Shared status indicators and sidebar keyboard focus
+
+The user observed yellow attention balls alongside green session circles and requested Up/Down navigation in the Sessions sidebar. Reuse the existing ball's task-aware presentation calculation for dots and tab icons, with one shared palette. Do not change runtime heuristics or the statuses exposed to MCP; retain those diagnostic values under an explicit Runtime label. Owned browser tabs resolve to the same agent presentation.
+
+Native reproduction showed the list's first arrow selection calling `selectTab`, which immediately made the terminal first responder. Split sidebar selection/reveal from explicit native activation. The list keeps focus through native Up/Down selection; Return or a direct pane click activates the selected native view. Keep all key handling scoped to the sidebar so terminal/editor/browser arrow input and marked text are unaffected.
+
 ## 2026-11-10: Fixed sphere tangents and continuous map drags
 
 The user requested arrows touching spheres and staying stationary throughout slower expansion/collapse. Reserve each full window footprint for routing and choose one shared docking side from parent/worker layout geometry, independent of focus and status. Place the sphere internally tangent to the edge midpoint and scale the retained window about that same point. Route all relationships on a worker through its dock; preserve the existing rounded orthogonal router and clearance/fallback limits. Attention pulses only the glow, preserving exact contact. Shape transitions use a separate 420 ms smooth animation, 50% longer than the earlier 280 ms policy; other workspace animation is unchanged.

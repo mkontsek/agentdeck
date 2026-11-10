@@ -47,6 +47,13 @@ extension AppStore {
         paneRevealRevision += 1
     }
 
+    /// A list selection reveals the pane, but leaves the list's responder available for the next arrow key.
+    func selectSidebarSession(_ id: UUID) {
+        guard session(id) != nil else { return }
+        focusedSessionID = id
+        paneRevealRevision += 1
+    }
+
     /// Explicit UI intent is handled synchronously. Later representable updates may attach content,
     /// but cannot replace an editor the user focused in the meantime.
     func focusSession(_ id: UUID) {

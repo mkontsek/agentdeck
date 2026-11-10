@@ -145,6 +145,12 @@ final class CanvasMiniMapTests: XCTestCase {
         XCTAssertTrue(window.makeFirstResponder(terminal))
         let observer = try XCTUnwrap(descendants(host).compactMap { $0 as? CanvasScrollObservationView }.first)
         let scroll = try XCTUnwrap(observer.enclosingScrollView)
+        // Initial native geometry is published asynchronously after attachment/layout. Await readiness,
+        // not a machine-load-dependent fixed delay, before testing scroll/focus behavior.
+        for _ in 0..<200 where store.canvasOverview.snapshot == nil {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let original = try XCTUnwrap(store.canvasOverview.snapshot)
         XCTAssertEqual(original.panes.count, 12)
         XCTAssertEqual(original.focusedPaneID, first.paneID)

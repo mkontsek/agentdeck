@@ -29,17 +29,18 @@ struct InspectorView: View {
     @ViewBuilder
     private func inspector(for s: ManagedSession) -> some View {
         let rt = store.runtime[s.id] ?? SessionRuntime()
+        let display = store.sessionDisplayStatus(for: s)
         Form {
             Section {
                 TextField("Name", text: bind(s, \.name))
                 LabeledContent("Kind", value: s.kind == .cli ? (store.profile(for: s)?.name ?? "CLI") : "Browser")
                 LabeledContent("Status") {
                     HStack(spacing: 5) {
-                        Circle().fill(rt.status.color).frame(width: 8, height: 8)
-                        Text(rt.status.label)
-                        Text("· \(relative(rt.statusSince))").foregroundStyle(.secondary)
+                        SessionStatusIndicator(status: display)
+                        Text(display.label)
                     }
                 }
+                LabeledContent("Runtime", value: "\(rt.status.label) · \(relative(rt.statusSince))")
                 if let q = rt.pendingQuestion { LabeledContent("Pending", value: q).foregroundStyle(.orange) }
                 if let m = rt.programMessage, !m.isEmpty { LabeledContent("Program", value: m) }
                 if let code = rt.exitCode { LabeledContent("Exit code", value: "\(code)") }

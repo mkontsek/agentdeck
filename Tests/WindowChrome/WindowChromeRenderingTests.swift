@@ -53,6 +53,14 @@ final class WindowChromeRenderingTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(350))
         let usage = try XCTUnwrap(
             descendants(hosting).compactMap { $0 as? MiniWindowResizeView }.first { $0.workspaceBounds != nil })
+        // The panel enters with a native animation; wait for its real grip to be reachable.
+        // Keep the hit-test assertion below so a genuinely covered/missing grip still fails.
+        for _ in 0..<200 {
+            hosting.layoutSubtreeIfNeeded()
+            let grip = CGPoint(x: usage.bounds.maxX - 10, y: usage.bounds.maxY - 10)
+            if hosting.hitTest(usage.convert(grip, to: hosting.superview)) === usage { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let displayed = usage.windowFrame
         let corner = CGPoint(x: usage.bounds.maxX - 10, y: usage.bounds.maxY - 10)
         XCTAssertTrue(hosting.hitTest(usage.convert(corner, to: hosting.superview)) === usage)
