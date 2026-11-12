@@ -26,7 +26,7 @@ final class GlassBallTests: XCTestCase {
         store.runtime[child.id]?.status = .working
         XCTAssertEqual(store.glassBallStatus(for: child), .working)
         store.tasks = [BoardTask(id: 1, title: "Fixture", ownerSessionID: child.id, status: .awaitingApproval)]
-        XCTAssertEqual(store.glassBallStatus(for: child), .attention)
+        XCTAssertEqual(store.glassBallStatus(for: child), .working, "Board approval must not hide live activity")
         store.tasks[0].status = .done
         XCTAssertEqual(store.glassBallStatus(for: child), .working, "New work takes priority over past success")
         store.runtime[child.id]?.status = .idle

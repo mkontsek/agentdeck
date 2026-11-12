@@ -37,13 +37,12 @@ extension AppStore {
     func sessionDisplayStatus(for session: ManagedSession) -> GlassBallStatus {
         let owner = browserOwner(for: session) ?? session
         let status = status(of: owner.id)
-        let tasks = tasks.filter { $0.ownerSessionID == owner.id || $0.id == owner.delegatedTaskID }
-        if [.waitingForUser, .stalled, .error, .quotaWarning].contains(status)
-            || tasks.contains(where: { [.blocked, .review, .awaitingApproval].contains($0.status) })
-        {
+        // Task review/approval is a board workflow, not evidence that the live session needs input.
+        if [.waitingForUser, .stalled, .error, .quotaWarning].contains(status) {
             return .attention
         }
         if status == .working || status == .starting { return .working }
+        let tasks = tasks.filter { $0.ownerSessionID == owner.id || $0.id == owner.delegatedTaskID }
         if finishedSessionIDs.contains(owner.id) || (!tasks.isEmpty && tasks.allSatisfy { $0.status == .done }) {
             return .finished
         }

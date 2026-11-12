@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-12: Session attention follows runtime, not task review history
+
+The synchronized indicators exposed an overly broad rule: any owned or delegated task awaiting approval, in review or blocked painted its session yellow even while the CLI was idle or working. Supersede the task-attention precedence from the November10 decision. Keep one shared status/palette for balls, dots and tabs, but derive attention only from runtime waiting-for-user, stalled, error or quota-warning states. Task approval remains a board workflow and does not change live activity colors. Existing completion markers and all-associated-tasks-done green remain below active work in precedence. No runtime heuristic, task approval policy, stored state or focus behavior changes.
+
 ## 2026-11-10: Shared status indicators and sidebar keyboard focus
 
 The user observed yellow attention balls alongside green session circles and requested Up/Down navigation in the Sessions sidebar. Reuse the existing ball's task-aware presentation calculation for dots and tab icons, with one shared palette. Do not change runtime heuristics or the statuses exposed to MCP; retain those diagnostic values under an explicit Runtime label. Owned browser tabs resolve to the same agent presentation.
