@@ -94,3 +94,29 @@ An optional live Codex check requires the installed CLI and existing sign-in, st
 - Safe automatic startup: built-in Claude/Codex/Grok prompt argv and Gemini/Antigravity `--prompt-interactive`. Custom templates can position `{initialPrompt}` explicitly. Otherwise startup instructions wait in the inbox and require a provider tool call.
 - `Tests/Subagents/DraftPreservationTests.swift` uses an isolated SwiftTerm PTY with multiline Unicode, mid-text input, native selection/IME, statuses, user Enter and stop/restart. Inbox tests cover atomic failure, corruption, idempotency, receipts, batch order, HTTP attachment and replacement identity. `InitialPromptTests` verifies literal argv and no replay on resume.
 - Live provider check is opt-in: build tests, then run `AGENTDECK_LIVE_DRAFT=1 xcrun xctest -XCTest LiveDraftProviderTests build/Build/Products/Debug/AgentDeckTests.xctest`. It launches only a disposable Codex, requests a tool-free arithmetic answer via argv, adds a synthetic draft, and verifies worker events leave its screen/caret unchanged. A second fixture holds an actual MCP response while editing a draft, then verifies inbox acknowledgment and logical caret preservation. It never submits the synthetic draft or sends input to existing sessions. Xcode test launching does not automatically forward this environment flag.
+
+## Safe worker resume verification
+
+Version 0.1.36 adds explicit native continuation for verified shared-server Codex
+threads. Other transports fail safely; see [[Coordination-and-Usage]]. Existing
+hosts keep their loaded code until the user relaunches. Installing does not restart
+them or migrate active terminals. Preserve `worker-resumes.json` along with state
+and resume checkpoints. Never delete its IDs to force a retry after uncertainty.
+
+`WorkerResumeTests` and `WorkerResumeTransportTests` cover the original silent-reuse
+regression, owner/state guards, native queue/start receipts, active races, literal
+Unicode/shell-looking text, failure, cancellation, persistence and stale callbacks.
+The opt-in live test launches its own local server and synthetic Codex thread,
+attaches its own TUI, leaves a Unicode draft with a mid-text caret and native IME,
+and verifies an actual second response through `resumeWorker`. It never targets
+existing user sessions or reads their transcripts:
+
+```sh
+make test
+AGENTDECK_LIVE_RESUME=1 xcrun xctest -XCTest LiveWorkerResumeTests \
+  build/Build/Products/Debug/AgentDeckTests.xctest
+```
+
+The test uses the installed CLI's existing sign-in. A missing capability, setup
+screen or transport fails visibly; it never confirms dialogs or submits draft text.
+The provider's synthetic thread history is retained; no user resume data is removed.

@@ -46,6 +46,12 @@ extension AppStore {
             if let child = sessions.first(where: { $0.parentSessionID == parentID && $0.delegatedTaskID == taskID }),
                 existing.ownerSessionID == child.id
             {
+                guard instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw CoordinationError(
+                        message:
+                            "Worker already exists; continuation instructions were NOT submitted. Use resume_worker with worker_id=\(child.id.uuidString), a stable request_id and explicit instructions. Read its receipt to distinguish acceptance from a verified turn start."
+                    )
+                }
                 return child
             }
             guard existing.ownerSessionID == nil || existing.ownerSessionID == parentID else {
@@ -78,7 +84,7 @@ extension AppStore {
             )
         }
         guard
-            children.filter({ !$0.subagentCompleted }).count
+            activeWorkerCount(parentID: parentID)
                 < SubagentLimits.clampedConcurrentWorkers(settings.maximumConcurrentSubagents)
         else {
             throw CoordinationError(
@@ -114,7 +120,7 @@ extension AppStore {
             Additional instructions: \(instructions)
             This is your complete handoff; do not scrape the parent's private conversation.
             Stay within the task's file scope; other workers may share this directory. Coordinate overlapping edits with the parent.
-            When finished, call report_subagent_result with a concise summary, changed files, verification and limitations. Set blocked=true if user input is required. Do not spawn more agents or approve your own completion.
+            At an unfinished checkpoint, call report_subagent_progress; it does not complete the task. Only when finished, call report_subagent_result with a concise summary, changed files, verification and limitations. Set blocked=true if user input is required. Do not spawn more agents or approve your own completion.
             """
         addSession(child, start: false, focus: false)
         delegated.ownerSessionID = child.id
@@ -136,7 +142,7 @@ extension AppStore {
         guard !summary.isEmpty, summary.count <= 65_536 else {
             throw CoordinationError(message: "A result summary of at most 65,536 characters is required.")
         }
-        if child.subagentCompleted {
+        if child.subagentCompleted && task.status != .blocked {
             guard queueSubagentNotification(task, child: child) else {
                 throw CoordinationError(
                     message: "Result is on the board but inbox acceptance failed; retry report_subagent_result.")
@@ -151,6 +157,28 @@ extension AppStore {
         {
             throw CoordinationError(
                 message: "Result is on the board but inbox acceptance failed; retry report_subagent_result.")
+        }
+    }
+
+    func reportSubagentProgress(caller: UUID, summary: String) throws {
+        guard let child = session(caller), let id = child.delegatedTaskID,
+            var task = tasks.first(where: { $0.id == id }), task.ownerSessionID == caller,
+            task.status == .inProgress || task.status == .blocked
+        else {
+            throw CoordinationError(message: "Only the assigned worker may publish a checkpoint on unfinished work.")
+        }
+        let summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty, summary.utf8.count <= 65_536 else {
+            throw CoordinationError(message: "A checkpoint summary of 1–65,536 UTF-8 bytes is required.")
+        }
+        task.notes += "\n[\(child.name) checkpoint — unfinished] \(summary)"
+        task.status = .inProgress
+        updateTask(task, by: child.name)
+        saveNow()
+        guard let published = tasks.first(where: { $0.id == task.id }),
+            queueSubagentNotification(published, child: child)
+        else {
+            throw CoordinationError(message: "Checkpoint saved but parent notification failed.")
         }
     }
 
@@ -188,7 +216,7 @@ extension AppStore {
     func subagentBriefing(for session: ManagedSession) -> String {
         if session.delegatedTaskID != nil {
             return
-                "You are a task subagent. Work only on your assigned task; report through report_subagent_result. Do not delegate or recruit more agents."
+                "You are a task subagent. Work only on your assigned task. Use report_subagent_progress for unfinished checkpoints, report_subagent_result only for a final result or explicit blocker. Do not delegate or recruit more agents."
         }
         guard session.kind == .cli else { return "" }
         let mainRole =

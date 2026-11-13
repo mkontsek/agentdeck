@@ -80,6 +80,12 @@ extension AppStore {
     func updateTask(_ task: BoardTask, by source: String = "user") {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         let old = tasks[index]
+        if old.ownerSessionID != task.ownerSessionID,
+            workerResumes.requests.contains(where: { $0.taskID == task.id && $0.phase.reservesWorker })
+        {
+            lastError = "Cancel or reconcile the task's native continuation before transferring ownership."
+            return
+        }
         var next = task
         next.events = old.events
         var changes: [String] = []
@@ -102,6 +108,10 @@ extension AppStore {
     }
 
     func deleteTask(_ id: Int) {
+        guard !workerResumes.requests.contains(where: { $0.taskID == id && $0.phase.reservesWorker }) else {
+            lastError = "Cancel or reconcile the native continuation before deleting its task."
+            return
+        }
         guard !tasks.contains(where: { $0.dependencies.contains(id) }) else {
             lastError = "Other tasks depend on #\(id). Remove those dependencies first."
             return
@@ -155,6 +165,9 @@ extension AppStore {
         }
         guard !handoffs.contains(where: { $0.taskID == task.id && $0.status.isOpen }) else {
             throw CoordinationError(message: "This task already has an open handoff. Resolve or cancel it first.")
+        }
+        guard !workerResumes.requests.contains(where: { $0.taskID == task.id && $0.phase.reservesWorker }) else {
+            throw CoordinationError(message: "Cancel or reconcile the native continuation before preparing a handoff.")
         }
         let context = HandoffContext(
             objective: description ?? task.description, sharedNotes: task.notes, summary: note ?? "",
@@ -233,6 +246,9 @@ extension AppStore {
         }
         guard unfinishedDependencies(of: task).isEmpty else {
             throw CoordinationError(message: "Complete the task dependencies before accepting work.")
+        }
+        guard !workerResumes.requests.contains(where: { $0.taskID == task.id && $0.phase.reservesWorker }) else {
+            throw CoordinationError(message: "Cancel or reconcile the native continuation before accepting ownership.")
         }
         task.ownerSessionID = caller
         task.status = .inProgress

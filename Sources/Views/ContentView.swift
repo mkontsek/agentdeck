@@ -75,6 +75,12 @@ struct ContentView: View {
             isPresented: Binding(
                 get: { !store.isDemoMode && store.showInjectSheet }, set: { store.showInjectSheet = $0 })
         ) { InjectSheet() }
+        .sheet(
+            isPresented: Binding(
+                get: { store.resumeWorkerSheetID != nil }, set: { if !$0 { store.resumeWorkerSheetID = nil } })
+        ) {
+            if let id = store.resumeWorkerSheetID { WorkerResumeSheet(workerID: id) }
+        }
         .alert(
             "AgentDeck",
             isPresented: Binding(

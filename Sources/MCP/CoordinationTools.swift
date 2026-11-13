@@ -84,6 +84,12 @@ extension AppStore {
                 throw CoordinationError(message: "Resolve the open handoff before changing ownership.")
             }
             task.ownerSessionID = requested
+            if requested != tasks.first(where: { $0.id == id })?.ownerSessionID,
+                workerResumes.requests.contains(where: { $0.taskID == id && $0.phase.reservesWorker })
+            {
+                throw CoordinationError(
+                    message: "Cancel or reconcile the native continuation before changing ownership.")
+            }
         }
         if let value = args["status"] as? String {
             guard let status = TaskStatus(rawValue: value) else { throw CoordinationError(message: "Invalid status.") }

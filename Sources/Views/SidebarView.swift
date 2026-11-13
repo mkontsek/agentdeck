@@ -63,6 +63,7 @@ struct SidebarView: View {
         Button("Stop") { store.stopSession(s.id) }
         if s.kind == .cli {
             if s.delegatedTaskID != nil {
+                Button("Resume Worker…") { store.resumeWorkerSheetID = s.id }
                 Button("Promote to Main Conversation") { store.promoteToMainConversation(s.id) }
                     .help("Preserves tasks and history. Restart the session afterward to reload its role and tools.")
             }

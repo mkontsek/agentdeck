@@ -119,7 +119,7 @@
 - `Views/Coordination` provides the primary Work workspace, task detail/history and reviewable handoff composer. The existing session canvas is retained. Native terminal views remain mounted across Work/Sessions and use stable pane identities across grid/canvas/maximize transitions.
 - `WorkspaceMotion` centralizes 240 ms transitions and respects Reduce Motion. Sheets retain standard macOS presentation; panels/disclosures/panes animate without creating replacement PTYs.
 - `AgentStatusMenu` exposes attention/session status. `AttentionShortcut` owns its Carbon hotkey registration and unregisters on shutdown; registration failure is visible in the log.
-- `Store/SubagentSessions.swift` and `MCP/SubagentTools.swift` provide `delegate_task` and `report_subagent_result`. A root MCP-enabled CLI delegates its own/unassigned ready task into a fresh managed session, inheriting profile, directory/worktree and pane size, with a separate pane positioned beside its parent without moving focus. An existing task ID reuses its worker. Ownership, dependencies and open handoffs are checked before mutation.
+- `Store/SubagentSessions.swift` and `MCP/SubagentTools.swift` provide delegation and progress/result reporting. A root MCP-enabled CLI delegates its own/unassigned ready task into a fresh managed session, inheriting profile, directory/worktree and pane size, with a separate pane positioned beside its parent without moving focus. An existing task ID returns its worker identity without starting work; supplied continuation instructions require `resume_worker`. Ownership, dependencies and open handoffs are checked before mutation.
 - The default-enabled policy instructs the parent to end its turn after delegation. Worker launch is synchronous only through PTY setup; completion is asynchronous. Attached workers cannot delegate/recruit. Limits are 1–20 active workers (default 20) and 40 retained workers per parent, centralized in `SubagentLimits`. A one-time settings migration replaces the legacy default of 3 with 20; other explicit limits survive. The persisted migration marker allows selecting 3 again afterward. Legacy settings did not distinguish an explicitly selected 3 from the old default. Workers share the directory and receive explicit scope rather than copied parent transcripts.
 - `Store/SubagentPromotion.swift` promotes a worker when its parent is removed, when legacy saved state has no existing parent, or through the user's Promote to Main Conversation action. It clears parent/task-role markers and the generated initial worker prompt, preserving board tasks, ownership, evidence, approval state and exact provider resume identity. Tools and briefing files immediately reflect the main role. A running CLI is retained and shows a restart notice because its launch instructions and MCP catalog may be cached. Promotion is not exposed as an agent tool; attached workers cannot grant themselves delegation privileges.
 - A result updates published task evidence, retains completion approval and queues a parent notification. Early worker exit blocks the task and releases its slot. Notifications persist even for stopped parents; published final task state is also a recovery outbox. An MCP tool result delivers them automatically during a provider turn. No unsolicited wake is claimed for an idle TUI; updates wait safely until its next AgentDeck tool call. `TaskEditorSheet` can launch newly created ready tasks; future/dependent tasks remain on the board.
@@ -132,3 +132,38 @@
 - `NoninteractiveKeychain` combines `LAContext.interactionNotAllowed` with the legacy process interaction switch around a synchronous lookup, restoring the prior setting in `defer`. Apple's legacy login-keychain implementation ignores the modern context for ACL/unlock dialogs; if suppression cannot be established, no lookup runs. Credential ACLs and Keychain items are never modified.
 - HTTP requests use ephemeral sessions, reject redirects and suppress cookie storage. No credentials, usage responses or account identifiers enter persisted state/MCP. Provider errors retain the previous timestamp/sample and mark it stale.
 - Unsupported providers remain listed with explicit unknown usage/limits/reset. Custom profile/account environments are not assumed to match the default login.
+
+## 12. Explicit worker resume
+
+`Store/WorkerResume` owns main-actor authorization and request reservations;
+`Services/WorkerResume` owns the bounded native Codex transport and atomic
+`worker-resumes.json` journal beside `state.json`. `Models/WorkerResume` defines
+receipt states. MCP and `WorkerResumeSheet` use the same operation. Request UUID,
+parent/worker/task IDs, task revision, runtime generation, exact provider thread,
+queue/turn IDs and receipt state persist before the relevant transition. The
+separate journal is not overwritten by an older host's state writer. Corruption
+fails closed; identities are retained (1024 requests / 8 MiB) for retry safety.
+
+A detached task opens `codex app-server proxy` with fixed argument arrays and
+speaks the existing server's WebSocket protocol. Bounds cover handshake, frame,
+event buffer, bytes, request deadlines and observation lifetime. Instructions are
+JSON text, never command syntax. Metadata-only thread reads validate identity,
+directory and idle state; a native rejoin subscribes without copying history.
+`thread/queue/add` carries the request UUID, and `thread/queue/start` addresses only
+its queue ID. A TUI-consumed queue entry is verified by its live user-message
+client ID. No terminal host input, focus, selection, IME or lifecycle call occurs.
+The provider's existing thread, model, policies, tools and browser owner remain.
+
+Only current parent/assigned-owner relationships can resume/read/cancel. Open
+handoffs, dependencies, final task states, Stop, active workers and the existing
+1–20 concurrency policy are checked before launch. Queued/running/uncertain
+requests reserve a slot even if the task was blocked. Task ownership cannot move
+while a continuation reserves it. Late callbacks retain their receipt but cannot
+mutate a replacement generation or reassigned task. Known launch failure leaves
+task ownership/status unchanged. Receipt loss or host restart becomes uncertain,
+never automatic replay. Explicit cancellation/reconciliation targets only this
+request's provider IDs and requires idle verification before releasing uncertainty.
+
+Native turn completion does not imply completed project work. Progress reporting
+leaves the board in progress; final result reporting retains user approval. See
+[[Coordination-and-Usage]] for capability limits and receipt semantics.

@@ -77,6 +77,7 @@ struct InspectorView: View {
                 }
                 Section("Capabilities") {
                     if s.delegatedTaskID != nil {
+                        Button("Resume Worker…") { store.resumeWorkerSheetID = s.id }
                         Button("Promote to Main Conversation") { store.promoteToMainConversation(s.id) }
                         Text("Keeps tasks and history. Restart the session afterward to reload its role and tools.")
                             .font(.caption).foregroundStyle(.secondary)

@@ -77,6 +77,11 @@ final class AppStore: ObservableObject {
     var terminalMetadataFlushTask: Task<Void, Never>?
     private var loaded = false
     let inbox: CoordinationInbox
+    let workerResumes: WorkerResumeJournal
+    @Published var workerResumeRevision = 0
+    @Published var resumeWorkerSheetID: UUID?
+    var workerResumeJobs: [UUID: Task<Void, Never>] = [:]
+    var workerResumeTransport: WorkerResumeTransport?
     private var appearanceObserver: NSKeyValueObservation?
     private let storageURL: URL
     private let instructionHome: URL
@@ -95,6 +100,8 @@ final class AppStore: ObservableObject {
     init(stateURL: URL? = nil, usageMonitor: CLIUsageMonitor? = nil) {
         self.usageMonitor = usageMonitor ?? CLIUsageMonitor()
         storageURL = stateURL ?? Self.stateURL
+        workerResumes = WorkerResumeJournal(
+            url: storageURL.deletingLastPathComponent().appendingPathComponent("worker-resumes.json"))
         inbox = CoordinationInbox(
             url: storageURL.deletingLastPathComponent().appendingPathComponent("coordination-inbox.json"))
         // An isolated store must never change the user's provider instructions.
@@ -103,6 +110,7 @@ final class AppStore: ObservableObject {
             ?? FileManager.default.homeDirectoryForCurrentUser
         load()
         if let error = inbox.loadError { lastError = error }
+        if let error = workerResumes.error { lastError = error }
         wireHosts()
         loaded = true
         recoverCoordinationNotifications()
@@ -136,6 +144,7 @@ final class AppStore: ObservableObject {
     }
 
     func shutdown() {
+        for job in workerResumeJobs.values { job.cancel() }
         cancelTerminalMetadata()
         bootstrapTask?.cancel()
         resumeTrackingTask?.cancel()
@@ -235,8 +244,9 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func saveNow() {
-        guard canSave else { return }
+    @discardableResult
+    func saveNow() -> Bool {
+        guard canSave else { return false }
         var st = PersistedState()
         st.sessions = sessions
         st.tasks = tasks
@@ -257,8 +267,10 @@ final class AppStore: ObservableObject {
             try FileManager.default.createDirectory(
                 at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try enc.encode(st).write(to: storageURL, options: .atomic)
+            return true
         } catch {
             lastError = "Could not save state: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -274,7 +286,9 @@ final class AppStore: ObservableObject {
             self.runtime[id]?.isRunning = false
             self.runtime[id]?.exitCode = code
             self.setStatus(id, (code ?? 0) == 0 ? .exited : .error)
-            self.subagentStopped(id, reason: "process exited (code \(code.map(String.init) ?? "signal"))")
+            if !self.workerResumes.requests.contains(where: { $0.workerID == id && $0.phase.reservesWorker }) {
+                self.subagentStopped(id, reason: "process exited (code \(code.map(String.init) ?? "signal"))")
+            }
             self.addLog(
                 source: self.name(of: id), message: "process exited (code \(code.map(String.init) ?? "signal"))",
                 level: (code ?? 0) == 0 ? .info : .warn)
@@ -332,7 +346,17 @@ final class AppStore: ObservableObject {
         cliProfiles.first { $0.id == session.cliProfileID }
     }
 
-    func status(of id: UUID) -> SessionStatus { runtime[id]?.status ?? .exited }
+    func status(of id: UUID) -> SessionStatus {
+        if let request = workerResumes.requests.last(where: { $0.workerID == id && $0.phase.reservesWorker }) {
+            switch request.phase {
+            case .checking, .submitting, .queued: return .starting
+            case .started: return .working
+            case .uncertain: return .waitingForUser
+            default: break
+            }
+        }
+        return runtime[id]?.status ?? .exited
+    }
 
     func resolveSession(_ ref: String, from caller: UUID? = nil) -> ManagedSession? {
         let r = ref.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -485,6 +509,13 @@ final class AppStore: ObservableObject {
 
     func startSession(_ id: UUID) {
         guard let s = session(id), runtime[id]?.isRunning != true else { return }
+        if s.delegatedTaskID != nil, let error = workerResumes.error {
+            lastError = error
+            return
+        }
+        guard !s.resumeStopped,
+            !workerResumes.requests.contains(where: { $0.workerID == id && $0.phase.reservesWorker })
+        else { return }
         pendingTerminalMetadata[id] = nil
         var rt = runtime[id] ?? SessionRuntime()
         rt.status = .starting
@@ -565,7 +596,12 @@ final class AppStore: ObservableObject {
     }
 
     func restartSession(_ id: UUID) {
+        guard !workerResumes.requests.contains(where: { $0.workerID == id && $0.phase.reservesWorker }) else {
+            lastError = "Resolve or cancel the native worker resume before restarting its terminal."
+            return
+        }
         guard let s = session(id) else { return }
+        if s.resumeStopped { enableWorkerResume(id) }
         switch s.kind {
         case .cli: terminals.dispose(id: id)
         case .browser: browsers.dispose(id: id)
@@ -576,6 +612,12 @@ final class AppStore: ObservableObject {
 
     func stopSession(_ id: UUID) {
         guard let s = session(id) else { return }
+        cancelWorkerResume(id)
+        if let index = sessions.firstIndex(where: { $0.id == id }), s.delegatedTaskID != nil {
+            sessions[index].resumeStopped = true
+            subagentStopped(id, reason: "explicit Stop action")
+            saveNow()
+        }
         pendingTerminalMetadata[id] = nil
         runtime[id]?.generation += 1
         runtime[id]?.isRunning = false
@@ -599,6 +641,14 @@ final class AppStore: ObservableObject {
 
     func removeSession(_ id: UUID, deleteWorktree: Bool = false, deleteBrowserProfile: Bool = false) {
         guard let s = session(id) else { return }
+        guard
+            !workerResumes.requests.contains(where: {
+                ($0.workerID == id || $0.parentID == id) && $0.phase.reservesWorker
+            })
+        else {
+            lastError = "Cancel or reconcile the native continuation before removing its worker or parent."
+            return
+        }
         if deleteWorktree, let repo = s.worktreeRepo, let path = s.worktreePath {
             guard
                 !sessions.contains(where: { $0.id != id && $0.effectiveDirectory.expandingTilde == path.expandingTilde }

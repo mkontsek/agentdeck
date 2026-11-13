@@ -405,6 +405,9 @@ struct PaneHeader: View {
             Button("Inject context now") { store.injectContextNow(session.id) }
         }
         Button("Restart") { store.restartSession(session.id) }
+        if session.delegatedTaskID != nil {
+            Button("Resume Worker…") { store.resumeWorkerSheetID = session.id }
+        }
         Button("Stop") { store.stopSession(session.id) }
         Divider()
         Button("Remove session", role: .destructive) { store.removeSession(session.id) }

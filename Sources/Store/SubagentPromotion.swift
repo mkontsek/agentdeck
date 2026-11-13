@@ -4,6 +4,10 @@ extension AppStore {
     /// A user action or parent removal changes the role, never the owned task or provider history.
     /// Keep a running PTY alive: its launch instructions and cached MCP catalog reload on restart.
     func promoteToMainConversation(_ id: UUID) {
+        guard !workerResumes.requests.contains(where: { $0.workerID == id && $0.phase.reservesWorker }) else {
+            lastError = "Cancel or reconcile the native continuation before promoting its worker."
+            return
+        }
         guard let index = sessions.firstIndex(where: { $0.id == id }),
             sessions[index].kind == .cli, sessions[index].delegatedTaskID != nil
         else { return }

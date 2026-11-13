@@ -123,6 +123,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
     var parentSessionID: UUID? = nil
     var delegatedTaskID: Int? = nil
     var subagentCompleted = false
+    var resumeStopped = false
 
     // UI / behaviour
     var paneID: UUID = UUID()
@@ -154,7 +155,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
             canvasPosition, browserSplitEnabled, browserSplitFraction,
             zIndex, isOrchestrator,
             autoInjectContext, autoStart, resumeLastConversation, resumeOnRestart,
-            parentSessionID, delegatedTaskID, subagentCompleted
+            parentSessionID, delegatedTaskID, subagentCompleted, resumeStopped
     }
 
     init(from decoder: Decoder) throws {
@@ -176,6 +177,7 @@ struct ManagedSession: Codable, Identifiable, Hashable {
         parentSessionID = c.value(.parentSessionID, default: nil)
         delegatedTaskID = c.value(.delegatedTaskID, default: nil)
         subagentCompleted = c.value(.subagentCompleted, default: false)
+        resumeStopped = c.value(.resumeStopped, default: false)
         paneID = c.value(.paneID, default: id)
         fontSizeOverride = c.value(.fontSizeOverride, default: nil)
         browserSplitEnabled = c.value(.browserSplitEnabled, default: true)

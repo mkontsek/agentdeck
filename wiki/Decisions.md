@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-11-13: Explicit provider-native worker continuation
+
+Idle terminal status is not permission to modify a composer. Repeated delegation
+previously returned an existing child before processing instructions. Reject those
+instructions with explicit resume guidance and keep inbox delivery separate from
+execution. Add one parent-authorized native continuation action with durable
+request/queue/turn identities and truthful receipts. An unfinished checkpoint uses
+progress reporting, never final completion.
+
+Use Codex's existing shared app-server queue protocol, verified locally with CLI
+0.169.0. Queue/start addresses an exact submission and does not steer active work.
+An attached TUI may consume it first; match the live client-message ID to establish
+the real turn rather than retry. Keep provider policies and the original terminal,
+draft, caret, IME, conversation and browser ownership. Unsupported providers,
+standalone servers and unknown conversation identities fail explicitly. Do not
+spawn a competing provider, guess the latest conversation, suspend the old process,
+or recover by pasting into its composer. Ambiguous outcomes reserve the worker
+until explicit native cancellation/reconciliation verifies idle state. There is
+no automatic continuation or task approval loop.
+
 ## 2026-11-12: Session attention follows runtime, not task review history
 
 The synchronized indicators exposed an overly broad rule: any owned or delegated task awaiting approval, in review or blocked painted its session yellow even while the CLI was idle or working. Supersede the task-attention precedence from the November10 decision. Keep one shared status/palette for balls, dots and tabs, but derive attention only from runtime waiting-for-user, stalled, error or quota-warning states. Task approval remains a board workflow and does not change live activity colors. Existing completion markers and all-associated-tasks-done green remain below active work in precedence. No runtime heuristic, task approval policy, stored state or focus behavior changes.

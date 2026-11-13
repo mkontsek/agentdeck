@@ -51,3 +51,56 @@ AgentDeck stores no account passwords. WebKit owns local cookies and website sto
 - Browser tests verify shared cookies across agent panes, retention after agent removal, restoration using the same persistent profile, and preservation of an explicit Separate account choice after migration.
 
 See [[Architecture]], [[Operations]], and [[Decisions]] for boundaries and release details.
+
+## Explicit worker continuation (0.1.36)
+
+Repeated `delegate_task(task_id)` is an identity lookup, not a new turn. Supplying
+continuation instructions to an existing worker now returns an error explaining
+`resume_worker`; the instructions are never silently discarded. Inbox delivery
+still never wakes a terminal.
+
+The parent can call `resume_worker(worker_id, request_id, instructions)` using a
+fresh UUID for a new explicit request. Retry the identical request with the same
+UUID. Read `worker_resume_status(request_id)` for the receipt. The worker's sidebar,
+mini-window menu and inspector also expose **Resume Worker…** with a dedicated
+instruction editor. Neither path reads or writes the terminal composer.
+
+| Receipt | Meaning |
+| --- | --- |
+| `checking` | Request persisted; transport checks pending, no execution claim |
+| `submitting` | Native queue acceptance has not been confirmed |
+| `queued` | Provider accepted an identified submission; not a verified turn start |
+| `started` | Native start receipt or matching live client-message event identifies the actual turn |
+| `ended` | That provider turn ended; this does not complete or approve its task |
+| `failed` | Known failure; detail states whether an exact queued entry was removed |
+| `cancelled` | Pre-submission cancellation, or verified idle after exact cancellation/reconciliation |
+| `uncertain` | Submission/observation was interrupted; never replay with a new ID |
+
+Supported capability: local Codex shared app-server with the experimental native
+queue protocol (verified with CLI 0.169.0), an exact saved conversation ID, matching
+working directory and an already-loaded idle provider thread. Active/unloaded
+threads, missing saved IDs, unavailable servers and other providers fail explicitly.
+AgentDeck never guesses the last conversation, creates a second provider writer,
+or falls back to paste/Enter. A standalone TUI without this shared transport is
+unsupported. Preserve it and its draft; a user may arrange a provider-native shared
+session separately. Resume itself does not migrate or terminate old sessions.
+
+The native queue can be consumed by the attached TUI before AgentDeck's explicit
+queue-start request. In that case AgentDeck verifies the live user-message client
+ID and turn ID; it never starts a second turn. Native queue input is distinct from
+the human composer. The preflight rejects active workers; a concurrent native turn
+cannot be steered by this queue operation.
+
+`cancel_worker_resume(request_id)` cancels the exact known turn. For an uncertain
+receipt, it explicitly reconciles only this request's queue ID and checks that the
+provider is idle. It leaves unrelated/unknown active turns alone. If verification
+fails, the reservation remains uncertain. **Cancel / reconcile** exposes this in
+the UI. Explicit Stop persists across restart; **Enable Resume** is a user action
+and does not itself start work. Resolve pending continuation before ownership
+transfer, handoff, promotion, removal or terminal restart.
+
+Use `report_subagent_progress(summary)` for an unfinished checkpoint. It leaves the
+task in progress and publishes a parent inbox notification. Use
+`report_subagent_result` only for a final deliverable or explicit blocker. Submitted
+review/approval tasks must be explicitly reopened before continuation. Approval
+always stays with the user; there are no automatic continuation loops.
