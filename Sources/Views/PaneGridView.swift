@@ -211,8 +211,9 @@ struct PaneView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.blue, lineWidth: focused ? 2.5 : 1.5)
-                .shadow(color: Color.blue.opacity(focused ? 0.22 : 0), radius: 4)
+                .strokeBorder(Color.blue, lineWidth: focused ? 4 : 1.5)
+                .shadow(color: Color.blue.opacity(focused ? 0.65 : 0), radius: 6)
+                .shadow(color: Color.blue.opacity(focused ? 0.3 : 0), radius: 14)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         )
