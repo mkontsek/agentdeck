@@ -411,7 +411,8 @@ struct PaneHeader: View {
         }
         Button("Stop") { store.stopSession(session.id) }
         Divider()
-        Button("Remove session", role: .destructive) { store.removeSession(session.id) }
+        Button("Remove mini-window", role: .destructive) { store.removeMiniWindow(containing: session.id) }
+            .help("Close every tab in this mini-window")
     }
 
     private func moveBy(x: Double, y: Double) {

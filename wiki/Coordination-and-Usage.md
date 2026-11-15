@@ -1,6 +1,6 @@
 # Coordination and usage
 
-The Work workspace is the app's front door. Sessions retains the terminal/browser desk. The CLI usage mini-window can be moved, resized, hidden and reopened with ⌥⌘U.
+The Work workspace is the app's front door. Sessions retains the terminal/browser desk. The CLI usage mini-window can be moved, resized, hidden and reopened with ⌥⌘U. In a session mini-window’s header menu, **Remove mini-window** closes all its tabs, even when a browser is selected. A tab’s **×** closes only that tab. Browser sign-ins, worktrees and task history are retained; independent child windows remain open. Pending native continuations must be cancelled or reconciled before the window can close.
 
 ## Handoff contract
 
