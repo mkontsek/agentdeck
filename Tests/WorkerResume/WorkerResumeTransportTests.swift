@@ -90,6 +90,26 @@ final class WorkerResumeTransportTests: XCTestCase {
         }
     }
 
+    func testRepeatedProviderExitSettlesAsUncertainWithoutReplaying() async throws {
+        for _ in 0..<12 {
+            let (store, parent, child, directory) = try fixture(mode: "lost-acceptance")
+            defer {
+                store.shutdown()
+                try? FileManager.default.removeItem(at: directory)
+            }
+            _ = try store.resumeWorker(
+                from: parent.id, workerID: child.id, requestID: UUID(), instructions: "One submission only")
+            try await wait(store) { $0 == .uncertain }
+            let receipt = try XCTUnwrap(store.workerResumes.requests.first)
+            guard receipt.phase == .uncertain else { return }
+            XCTAssertNil(receipt.turnID)
+            let log = try String(contentsOf: directory.appendingPathComponent("protocol.jsonl"))
+            XCTAssertEqual(log.components(separatedBy: "thread/queue/add").count - 1, 1)
+            XCTAssertFalse(log.contains("thread/queue/start"))
+            XCTAssertFalse(log.contains("turn/start"))
+        }
+    }
+
     func testCancellationTargetsOnlyVerifiedTurnAndExplicitStopPersists() async throws {
         let (store, parent, child, directory) = try fixture(mode: "running")
         defer {

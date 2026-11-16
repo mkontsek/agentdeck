@@ -10,13 +10,16 @@ struct CodexResumeRPCError: LocalizedError {
 
 /// Owned exclusively by a detached task. Connects to an existing server; never launches a second provider.
 final class CodexResumeConnection {
+    private static let exitWait: DispatchTimeInterval = .milliseconds(300)
     private let process = Process()
+    private let processExited = DispatchSemaphore(value: 0)
     private let input = Pipe()
     private let output = Pipe()
     private var buffer = Data()
     private var sequence = 0
     private var total = 0
     private var deferredEvents: [[String: Any]] = []
+    private var isClosed = false
 
     init(executable: String, socket: String? = nil) throws {
         process.executableURL = URL(fileURLWithPath: executable)
@@ -29,17 +32,23 @@ final class CodexResumeConnection {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [processExited] _ in processExited.signal() }
         try process.run()
         _ = fcntl(output.fileHandleForReading.fileDescriptor, F_SETFL, O_NONBLOCK)
     }
 
     func close() {
+        guard !isClosed else { return }
+        isClosed = true
         try? input.fileHandleForWriting.close()
-        if process.isRunning { process.terminate() }
-        let deadline = Date().addingTimeInterval(0.3)
-        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        process.waitUntilExit()
+        if process.isRunning {
+            process.terminate()
+            if processExited.wait(timeout: .now() + Self.exitWait) == .timedOut, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                _ = processExited.wait(timeout: .now() + Self.exitWait)
+            }
+        }
+        // Avoid waitUntilExit's run loop, which can stall after the detached task changes threads.
         try? output.fileHandleForReading.close()
     }
 

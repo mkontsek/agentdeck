@@ -19,6 +19,14 @@ Generate the project from `project.yml` (the Xcode project and `build/` are igno
 - Lint and format need an Xcode toolchain with `swift-format`. The Makefile uses Bash pipefail so a compiler failure cannot hide behind the output tail.
 - Pre-commit gate: `git config core.hooksPath .githooks` runs lint, format, tests and build. It is not installed automatically.
 
+Native rendering fixtures need an unlocked graphical session. A locked screen can
+stop the view-based display link even while the test window is attached and PTY
+echo succeeds. `TerminalLatencyTests` reports the failed stage, render counters
+and screen-lock state, then stops at the first timeout. Unlock the screen and
+rerun with the normal renderer; an alternate display-link diagnostic is not a
+substitute for the native gate. Background output fixtures stay alive until
+teardown, with a 120-second safety alarm for an abandoned runner.
+
 ## 2. Releasing locally
 
 - Increment the patch version in `project.yml`, build, replace `/Applications/AgentDeck.app`, then quit and reopen AgentDeck. A `make build` alone leaves a running installed app unchanged.

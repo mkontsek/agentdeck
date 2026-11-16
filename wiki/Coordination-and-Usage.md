@@ -85,6 +85,12 @@ or falls back to paste/Enter. A standalone TUI without this shared transport is
 unsupported. Preserve it and its draft; a user may arrange a provider-native shared
 session separately. Resume itself does not migrate or terminate old sessions.
 
+The short-lived proxy is closed with a termination callback and bounded waits:
+300 ms after graceful termination, then at most 300 ms after killing a stuck proxy.
+Cleanup is idempotent and does not use `Process.waitUntilExit()`; its run-loop wait
+could otherwise prevent a disconnected provider's failure/uncertainty receipt
+from reaching the UI. This cleanup never terminates the shared provider server.
+
 The native queue can be consumed by the attached TUI before AgentDeck's explicit
 queue-start request. In that case AgentDeck verifies the live user-message client
 ID and turn ID; it never starts a second turn. Native queue input is distinct from

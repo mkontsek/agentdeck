@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreGraphics
 import QuartzCore
 import SwiftTerm
 import SwiftUI
@@ -69,7 +70,7 @@ final class TerminalLatencyTests: XCTestCase {
         root.addSubview(hosting)
         window.orderFrontRegardless()
         let focused = try XCTUnwrap(host.view(for: ids[0]))
-        window.makeFirstResponder(focused)
+        XCTAssertTrue(window.makeFirstResponder(focused))
         for id in ids {
             let view = try XCTUnwrap(host.view(for: id))
             let script: String
@@ -79,15 +80,16 @@ final class TerminalLatencyTests: XCTestCase {
                     executable: "/bin/sh", args: ["-c", script],
                     environment: ["TERM=xterm-256color", "PATH=/usr/bin:/bin"], currentDirectory: "/tmp")
             } else {
-                // 100 screen updates/sec per terminal, bounded lifetime even if the test fails.
+                // Keep load alive until teardown; the alarm bounds a fixture abandoned by a failed runner.
+                let outputLifetimeSeconds = 120
                 script =
-                    "$|=1; for($n=0;$n<2000;$n++){print \"\\e]0;Fixture title\\a\\e]7501;state=working:msg=V29ya2luZw\\a\\e[H\"; for($r=0;$r<10;$r++){printf \"fixture %06d row %02d abcdefghijklmn\\r\\n\",$n,$r;} select undef,undef,undef,0.01;}"
+                    "alarm \(outputLifetimeSeconds);$|=1;for($n=0;;$n++){print \"\\e]0;Fixture title\\a\\e]7501;state=working:msg=V29ya2luZw\\a\\e[H\";for($r=0;$r<10;$r++){printf \"fixture %06d row %02d abcdefghijklmn\\r\\n\",$n,$r;}select undef,undef,undef,0.01;}"
                 view.startProcess(
                     executable: "/usr/bin/perl", args: ["-e", script],
                     environment: ["TERM=xterm-256color", "PATH=/usr/bin:/bin"], currentDirectory: "/tmp")
             }
         }
-        try await until { host.visibleLines(id: ids[0]).joined().contains("READY") }
+        try await until("PTY readiness") { host.visibleLines(id: ids[0]).joined().contains("READY") }
         try await Task.sleep(for: .seconds(1))
         if ProcessInfo.processInfo.environment["AGENTDECK_SCROLL_BASELINE"] == "1" {
             func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
@@ -129,9 +131,18 @@ final class TerminalLatencyTests: XCTestCase {
                     "Typing keeps the foreground live and defers background painting")
             }
             keyCallMs.append((CACurrentMediaTime() - t) * 1000)
-            try await until { host.visibleLines(id: ids[0]).contains(expected) }
+            try await until("echo at key \(index), expected \(expected), visible \(host.visibleLines(id: ids[0]))") {
+                host.visibleLines(id: ids[0]).contains(expected)
+            }
             parsedMs.append((CACurrentMediaTime() - t) * 1000)
-            try await until { focused.diagnostics.renders > renders }
+            try await until(
+                "render at key \(index), previous \(renders), current \(focused.diagnostics.renders), "
+                    + "frames \(focused.diagnostics.frames), ticks \(focused.diagnostics.ticks), "
+                    + "visible \(focused.visibleRect), attached \(focused.window === window), "
+                    + "metal \(focused.isUsingMetalRenderer)"
+            ) {
+                focused.diagnostics.renders > renders
+            }
             renderedMs.append((CACurrentMediaTime() - t) * 1000)
             let wake = CACurrentMediaTime()
             try await Task.sleep(for: .milliseconds(10))
@@ -176,9 +187,21 @@ final class TerminalLatencyTests: XCTestCase {
         ]
     }
 
-    private func until(_ condition: () -> Bool) async throws {
+    private struct FixtureTimeout: Error {}
+
+    private func until(
+        _ context: @autoclosure () -> String, file: StaticString = #filePath, line: UInt = #line,
+        condition: () -> Bool
+    ) async throws {
         let deadline = CACurrentMediaTime() + 5
         while !condition(), CACurrentMediaTime() < deadline { try await Task.sleep(for: .milliseconds(1)) }
-        XCTAssertTrue(condition(), "Native terminal fixture timed out")
+        guard condition() else {
+            let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+            let screenLocked = session?["CGSSessionScreenIsLocked"] as? Bool ?? false
+            XCTFail(
+                "Native terminal fixture timed out: \(context()), screenLocked \(screenLocked)", file: file,
+                line: line)
+            throw FixtureTimeout()
+        }
     }
 }

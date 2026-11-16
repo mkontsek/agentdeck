@@ -33,8 +33,10 @@ final class CanvasScrollPerformanceTests: XCTestCase {
                     executable: "/bin/sh", args: ["-c", "stty raw -echo; printf READY; exec /bin/cat"],
                     environment: ["TERM=xterm-256color", "PATH=/usr/bin:/bin"], currentDirectory: "/tmp")
             } else {
+                // Teardown owns termination; the alarm bounds a fixture abandoned by a failed runner.
+                let outputLifetimeSeconds = 120
                 let script =
-                    "$|=1;for($n=0;$n<3000;$n++){print \"\\e[H\";for($r=0;$r<12;$r++){printf \"scroll %06d line %02d abcdefghijklmnop\\r\\n\",$n,$r;}select undef,undef,undef,0.005;}print \"FINAL_OUTPUT\";"
+                    "alarm \(outputLifetimeSeconds);$|=1;for($n=0;;$n++){print \"\\e[H\";for($r=0;$r<12;$r++){printf \"scroll %06d line %02d abcdefghijklmnop\\r\\n\",$n,$r;}select undef,undef,undef,0.005;}"
                 terminal.startProcess(
                     executable: "/usr/bin/perl", args: ["-e", script],
                     environment: ["TERM=xterm-256color", "PATH=/usr/bin:/bin"], currentDirectory: "/tmp")
