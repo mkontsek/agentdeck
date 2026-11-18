@@ -4,7 +4,7 @@ DERIVED=build
 CONFIG?=Release
 APP_PATH=$(DERIVED)/Build/Products/$(CONFIG)/$(APP).app
 
-.PHONY: gen build test lint format check run install cleanup-installs clean icon
+.PHONY: gen build test lint format check run install cleanup-installs dmg clean icon
 
 gen:
 	xcodegen generate
@@ -36,6 +36,10 @@ install: build
 
 cleanup-installs:
 	swift scripts/cleanup-installations.swift "/Applications/$(APP).app" "$(DERIVED)"
+
+# Notarized disk image in $(DERIVED)/dist; UNSIGNED=1 builds a local test image. See wiki/Operations.md.
+dmg:
+	DERIVED="$(DERIVED)" UNSIGNED="$(UNSIGNED)" scripts/make-dmg.sh
 
 clean:
 	rm -rf $(DERIVED) $(APP).xcodeproj

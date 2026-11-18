@@ -230,4 +230,27 @@ final class WorkerResumeTransportTests: XCTestCase {
         store.cancelWorkerResume(child.id)
         try await wait(store) { !$0.reservesWorker }
     }
+
+    func testCloseKillsAProxyThatIgnoresTermination() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let connection = try CodexResumeConnection(
+            executable: try ResumeProtocolFixture.write(directory: directory, threadID: "stuck", mode: "stuck"))
+        defer { connection.close() }
+        // A completed handshake proves the fixture ignores SIGTERM before close() sends it.
+        try connection.initialize()
+        let recorded = try String(contentsOf: directory.appendingPathComponent("fixture.pid"), encoding: .utf8)
+        let pid = try XCTUnwrap(pid_t(recorded))
+        XCTAssertEqual(kill(pid, 0), 0, "The fixture must be running before close")
+        let start = Date()
+        connection.close()
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertGreaterThanOrEqual(elapsed, 0.3, "SIGTERM gets its whole wait before escalation")
+        XCTAssertLessThan(elapsed, 2, "Closing a stuck proxy stays bounded")
+        let probe = kill(pid, 0)
+        let probeError = errno
+        XCTAssertEqual(probe, -1, "SIGKILL must end a proxy that ignores SIGTERM")
+        XCTAssertEqual(probeError, ESRCH)
+    }
 }

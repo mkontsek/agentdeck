@@ -1,6 +1,6 @@
 # Operations
 
-Generate the project from `project.yml` (the Xcode project and `build/` are ignored), verify with `make check`, release by bumping the patch version and running `make install`, then relaunch by hand.
+Generate the project from `project.yml` (the Xcode project and `build/` are ignored), verify with `make check`, release by bumping the patch version and running `make install`, then relaunch by hand. `make dmg` packages the same version for other Macs.
 
 ## 1. Commands
 
@@ -14,6 +14,7 @@ Generate the project from `project.yml` (the Xcode project and `build/` are igno
 | `make install` | install to Applications and trash duplicate build/backup apps |
 | `make run` | install, clean up duplicates, open the Applications copy |
 | `make cleanup-installs` | remove duplicate AgentDeck apps under `build/` after installation |
+| `make dmg` | notarized disk image in `build/dist`; `UNSIGNED=1` builds a local test image |
 
 - Swift 5 language mode with complete concurrency checking; macOS 14 compatibility; SwiftTerm pinned at 1.99.1.
 - Lint and format need an Xcode toolchain with `swift-format`. The Makefile uses Bash pipefail so a compiler failure cannot hide behind the output tail.
@@ -39,7 +40,40 @@ teardown, with a 120-second safety alarm for an abandoned runner.
 
 - Local 0.1.18 verification on 2026-11-06 reproduced the stale worker role in a failing parent-close regression, then passed all 11 focused worker/promotion tests and the full 109-test suite. Format, strict lint, Release build, installed version keys and deep strict code-sign verification passed. Debug/Release duplicate apps were trashed; `/Applications/AgentDeck.app` is 0.1.18. The current host and live user state were left untouched. Relaunch repairs saved orphan roles before CLI startup; real provider acceptance after that relaunch remains unverified. Logs: `/tmp/agentdeck-promotion-{focused,full-tests,format,lint,install}.log`.
 
-## 3. Regression coverage
+- Local 0.1.39 verification on 2026-11-18 covers the focus-ring inset, the resume-proxy kill path and disk-image packaging. The suite passes 220 tests with 4 opt-in skips; format, strict lint and the universal Release build pass. `FocusRingClearanceTests` fails on the 0.1.38 layout (inset set to 0: 189 failed assertions, 24 ring pixels over the terminal) and passes with the inset. The Release app is ad-hoc signed with the hardened runtime and an empty entitlement set. The Release test bundle also passes inside a hardened-runtime copy of Xcode's `xctest` runner: PTY shells, CLI launch stubs, WebKit panes and sign-in popups, and the loopback MCP listener all ran under the hardened runtime. That runner carries one loader exemption, `disable-library-validation`, to load the ad-hoc test bundle. `make dmg UNSIGNED=1` produced a mountable universal 0.1.39 image. Not exercised: the hardened Release app itself, because no isolated-state launch exists and a second instance would share the MCP port and browser profiles; the Intel slice, because this Mac has no Rosetta; real provider CLIs; and real signing and notarization until Developer ID credentials exist (the signed path ran only against stubbed Apple tools). Evidence: `/Users/mkontsek/gitrepos/agentdeck/output/task108/`.
+
+## 3. Releasing a disk image
+
+`make dmg` runs `scripts/make-dmg.sh` and writes `build/dist/AgentDeck-<version>.dmg`.
+End users install from that image and need neither Xcode nor xcodegen.
+
+Prerequisites, once per Mac:
+
+- A **Developer ID Application** certificate with its private key in the login keychain (developer.apple.com → Certificates). `security find-identity -v -p codesigning` lists it. An Apple Development certificate cannot be notarized.
+- A notarytool keychain profile: `xcrun notarytool store-credentials agentdeck-notary --apple-id <Apple ID> --team-id <team>`. It asks for an app-specific password and stores it in the keychain. Never put the password in a file, a command line or the repository.
+- `DEVELOPER_ID` selects an identity by name or SHA-1 when the keychain holds several; `NOTARY_PROFILE` names another profile.
+
+Procedure:
+
+1. Bump the patch version in `project.yml`, run `make check`, pass the merge gate and merge to `main`.
+2. `make install`, so the installed app is the version being packaged.
+3. `make dmg`. It checks the identity and the notary profile before building, then stops at the first failure.
+4. Publish that one file: `gh release create v<version> build/dist/AgentDeck-<version>.dmg --repo mkontsek/agentdeck --target <full commit> --title "AgentDeck <version>" --latest`, with its SHA-256 in the notes.
+5. Download the published asset and run `spctl -a -t open --context context:primary-signature -vv` on it.
+
+What the script does:
+
+- Builds the universal Release app and refuses a product that is not `arm64` plus `x86_64`.
+- Copies it to a temporary staging folder, signs nested code and then the app with `--options runtime --timestamp` and no entitlements.
+- Notarizes and staples the app, builds a compressed (UDZO) image named `AgentDeck` holding the app and an `/Applications` link, signs the image, notarizes and staples it. Two submissions, so the app copied out of the image carries its own ticket.
+- Mounts the image without showing it in Finder and checks the version, both architectures, `codesign --verify --deep --strict`, the hardened-runtime flag, an empty entitlement set, `spctl -a -vv` on the app, `spctl -a -t open --context context:primary-signature -vv` on the image and `stapler validate` on both.
+- Removes the staging folder, then runs `make cleanup-installs`. Cleanup refuses while the packaged version is newer than the installed one; step 2 avoids that.
+
+`make dmg UNSIGNED=1` skips signing and notarization and writes `AgentDeck-<version>-unsigned.dmg` with the ad-hoc build signature. Use it to test the image layout. Gatekeeper rejects it on another Mac; never publish it. The script itself uploads only to Apple's notary service.
+
+Release builds use the hardened runtime and carry no entitlements; see [[Decisions]]. Debug builds and tests do not use the hardened runtime, so a hardened-runtime regression shows only in a Release app. Check PTY start, a CLI launch, a browser pane with a sign-in popup and the MCP port after the first relaunch of a new release.
+
+## 4. Regression coverage
 
 Local 0.1.26 verification on 2026-11-08 covers native focus retention (including visible WebKit automation, selection/IME and pointer/Tab navigation), capped reversible terminal fonts, bottom-right-only resizing, cached obstacle-aware rounded arrows and an independent Settings color. The universal Release suite passes157 tests with3 opt-in skips and0 failures. Changing provider title/status presentation is coalesced without buffering PTY output; lifecycle tests reject stale metadata. Strict lint, Release signature and native light/dark route checks pass. The source preserves task60 explicit paste, task79 inbox, task76 limits, task77 tabs, task78 OAuth, task80 layouts and task81 drawing behavior. Installation/activation evidence and the bounded review ledger are in `/Users/mkontsek/gitrepos/output/task79-focus/report.md`. An install does not restart existing sessions.
 
@@ -63,9 +97,11 @@ Local 0.1.23 verification on 2026-11-07 integrates connected worker/browser wind
 - The rendering test writes `/tmp/agentdeck-coordination-preview.png` using isolated state and fixture usage. Native layout regression checks preserve the same terminal container across animated grid/canvas/maximize and Work/Sessions transitions.
 - PTY tests wait for the shell to print a ready marker instead of sleeping a fixed time, because `zsh -l -i` startup takes seconds under load and flushes type-ahead.
 - Window chrome regression tests cover all eight directions in the geometry helper, boundary/minimum sizes, and the native bottom-right-only resize grip. Other borders and header controls pass through normally. Hosted drag events verify grid-to-canvas resizing preserves the terminal container, usage shrinks immediately from a viewport-clamped size, and geometry survives saving. Pixel checks verify dots in dark/light Grid and Canvas. Preview images are written to `/tmp/agentdeck-resize-preview.png` and `/tmp/agentdeck-dots-<appearance>-<layout>.png`.
+- Focus ring: `FocusRingClearanceTests` checks that the content inset clears the ring on straight edges and inside its corners, that first-column glyph ink is never under a border at 5 to 40 pt, and, in a hosted pane in both themes, that the terminal frame, column count and row count stay the same across focus changes and that no border-coloured pixel lies over the terminal. Previews: `agentdeck-focus-ring-*.png` under the user temporary directory.
+- Packaging: `DiskImageScriptTests` runs `scripts/make-dmg.sh` with `security`, `xcrun` and `make` replaced by stubs. It covers identity detection and explicit choice, rejection of non-Developer ID certificates, the missing notary profile, the `UNSIGNED` flag, failure before any build, notarization status handling and the innermost-first order of nested code. It builds, signs, uploads and mounts nothing. `WorkerResumeTransportTests` closes a fixture proxy that ignores SIGTERM and expects the kill within the bounded wait.
 - Resume tests use fake provider files, open-file metadata and harmless shell stubs: separate same-directory tab identities survive save/reload and bootstrap, explicit opt-outs remain, missing/stale/ambiguous identities are rejected, initial tasks are not replayed, and client-side browser URLs persist. No real provider conversation is started by these tests.
 
-## 4. Settings worth knowing
+## 5. Settings worth knowing
 
 - Settings → General can disable automatic defaults on an empty launch.
 - Settings → Skills controls folders and enabled skills; use Reload after editing. The catalog is `~/Library/Application Support/AgentDeck/skills/catalog.md`.
@@ -78,7 +114,7 @@ Local 0.1.23 verification on 2026-11-07 integrates connected worker/browser wind
 - Missing agent commands show setup links; authentication stays interactive.
 - If saved state cannot decode, back up and repair `~/Library/Application Support/AgentDeck/state.json`, then restart. Saving stays disabled until restart; alerts report write errors.
 
-## 5. Manual acceptance still needed
+## 6. Manual acceptance still needed
 
 - After upgrading, restart CLI processes to activate migrated launch instructions. Check identity/board/skills before and after a conversation reset and exact resume for each provider. Gemini/Antigravity use the default global `~/.gemini/GEMINI.md` bootstrap; custom context discovery must load that file. Remove only the marked AgentDeck section to uninstall the bootstrap. No live model acceptance is implied by shell argument and native UI regression tests.
 
@@ -87,6 +123,7 @@ Local 0.1.23 verification on 2026-11-07 integrates connected worker/browser wind
 - Check canvas dragging, resizing, shortcuts, theme and multi-window behavior by hand.
 - Test the oldest supported macOS and Intel hardware; local verification uses the Apple Silicon SDK and runtime.
 - Check menu-bar access and ⌃⌥⌘Space in the installed app; a conflicting global shortcut is logged without disabling the menu-bar action.
+- After the first relaunch of a hardened-runtime release (0.1.39 on), check in the installed app: a terminal pane starts its shell and CLI, a browser pane loads and completes a sign-in popup, an agent reaches the MCP port, and `osascript -e 'tell application "Finder" to get name of startup disk'` answers in a terminal pane.
 - When AgentDeck hosts the agent performing the update, install the verified bundle without quitting the running host. Relaunch after active sessions can be interrupted; installing alone does not change its running code.
 
 ## Automatic message submission

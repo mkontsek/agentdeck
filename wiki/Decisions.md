@@ -1,5 +1,49 @@
 # Decisions
 
+## 2026-11-18: Content inset under the focus ring; hardened runtime and a notarized disk image
+
+The 0.1.38 gate measured the 4-point focus ring hiding 50–59 % of the first text
+column at Menlo 12 pt and all of it at 7 pt and below. The ring is an overlay on
+the pane's edge and terminals ran to that edge. Keep the ring and glow as they
+are and inset session content by a constant 6 points on the edges that meet the
+border. Six, not four: a square content corner inset by only the ring width still
+lies under the ring's inner corner arc. Alternatives rejected: a ring drawn
+outside the pane is clipped where a pane fills the viewport (maximized) and at
+the canvas origin; an inset applied only while focused would change the PTY grid
+on every focus change and make the CLI repaint. The cost is paid once: a terminal
+is 12 points narrower and 6 points shorter, one or two columns and at most one
+row at 12 pt, when 0.1.39 first lays it out.
+
+For distribution, Release builds enable the hardened runtime and `make dmg`
+produces a Developer ID signed, notarized and stapled disk image. The app ships
+with no entitlements. It runs no JIT, loads no third-party libraries and sends no
+Apple events itself. The one candidate was
+`com.apple.security.automation.apple-events`, because macOS attributes Apple
+events from a tool in a terminal to AgentDeck. Measured on macOS 27.2 with
+throwaway wrapper apps:
+
+- `osascript` under a hardened app with no entitlements still reaches the
+  consent prompt; it carries Apple's own prompting right.
+- A tool that sends Apple events in-process is refused when no consent exists
+  yet, in both cases: under a hardened app for the missing entitlement, under a
+  plain app for the missing `NSAppleEventsUsageDescription`, which AgentDeck does
+  not declare.
+- Camera and microphone were never granted to AgentDeck and have no usage
+  descriptions either.
+
+So for a first request the hardened runtime takes nothing away that works on
+0.1.38. Letting terminal tools ask for Apple events, camera or microphone is a
+separate feature that needs usage descriptions as well as entitlements. Not
+measured: whether an in-process sender still uses a consent AgentDeck already
+holds, as it does on 0.1.38 for Finder, and whether the entitlement would be
+enough without a usage description.
+
+Release builds also turn off `CODE_SIGN_INJECT_BASE_ENTITLEMENTS`, so a local
+`make install` carries the same empty entitlement set as the image. The app is
+notarized before the image is built, then the image is notarized as well; a
+single submission would leave the copy inside the image without a stapled ticket.
+The app stays outside the sandbox, as before.
+
 ## 2026-11-13: Explicit provider-native worker continuation
 
 Idle terminal status is not permission to modify a composer. Repeated delegation

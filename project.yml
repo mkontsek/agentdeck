@@ -23,8 +23,8 @@ targets:
       properties:
         CFBundleName: AgentDeck
         CFBundleDisplayName: AgentDeck
-        CFBundleShortVersionString: "0.1.38"
-        CFBundleVersion: "0.1.38"
+        CFBundleShortVersionString: "0.1.39"
+        CFBundleVersion: "0.1.39"
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "MIT"
@@ -44,9 +44,15 @@ targets:
         ENABLE_HARDENED_RUNTIME: false
         ENABLE_APP_SANDBOX: false
         GENERATE_INFOPLIST_FILE: false
-        MARKETING_VERSION: "0.1.38"
-        CURRENT_PROJECT_VERSION: "0.1.38"
+        MARKETING_VERSION: "0.1.39"
+        CURRENT_PROJECT_VERSION: "0.1.39"
         COMBINE_HIDPI_IMAGES: true
+      configs:
+        Release:
+          # Notarization needs the hardened runtime and rejects the debugging entitlement Xcode injects.
+          # The app needs no entitlements of its own; see wiki/Decisions.md (2026-11-18).
+          ENABLE_HARDENED_RUNTIME: true
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: false
   AgentDeckTests:
     type: bundle.unit-test
     platform: macOS

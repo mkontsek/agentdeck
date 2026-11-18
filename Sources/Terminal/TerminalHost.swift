@@ -123,13 +123,18 @@ final class TerminalHost: LocalProcessTerminalViewDelegate {
         for v in views.values { theme(v, dark: dark) }
     }
 
+    /// Also painted around the terminal by its pane, so the content inset continues the terminal background.
+    nonisolated static func backgroundColor(dark: Bool) -> NSColor {
+        dark
+            ? NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.11, alpha: 1) : NSColor(calibratedWhite: 0.99, alpha: 1)
+    }
+
     private func theme(_ v: DeckTerminalView, dark: Bool) {
+        v.nativeBackgroundColor = Self.backgroundColor(dark: dark)
         if dark {
-            v.nativeBackgroundColor = NSColor(calibratedRed: 0.09, green: 0.09, blue: 0.11, alpha: 1)
             v.nativeForegroundColor = NSColor(calibratedWhite: 0.92, alpha: 1)
             v.caretColor = NSColor(calibratedWhite: 0.92, alpha: 1)
         } else {
-            v.nativeBackgroundColor = NSColor(calibratedWhite: 0.99, alpha: 1)
             v.nativeForegroundColor = NSColor(calibratedWhite: 0.12, alpha: 1)
             v.caretColor = NSColor(calibratedWhite: 0.12, alpha: 1)
         }

@@ -12,7 +12,7 @@ AgentDeck trusts your user account and every process running under it. Its coord
 | Agent browsers | Each CLI controls its own browser tab. All shared ordinary/agent panes use one persistent AgentDeck profile; the user explicitly chose shared sign-ins. Separate account remains an opt-in isolated profile. External browser profiles are untouched. | Isolate a browser from the agent driving it. `browser_eval` runs arbitrary JavaScript, including on signed-in sites. |
 | Files | Writes state, briefings and MCP configs under `~/Library/Application Support/AgentDeck/`. `read_skill` serves only regular `SKILL.md` files that resolve inside configured skill directories. Worktree deletion uses `git worktree remove` and refuses dirty trees. The log never records `browser_type` text, `browser_eval` scripts or URL query strings. | Encrypt anything. `state.json` holds session names, directories, tasks, the log and profile commands in plain text. Logs from versions before 0.1.11 may hold the first 40 characters of browser arguments; clear the log if you typed secrets through an agent browser. |
 
-The app is ad-hoc signed, not sandboxed and without hardened runtime, because it spawns processes and binds a port. Build from source and read `project.yml` if that matters.
+The app is not sandboxed, because it spawns processes and binds a port. Release builds use the hardened runtime and carry no entitlements: no JIT, no unsigned libraries, no debugger attachment, and no camera, microphone, contacts or location access for AgentDeck or for programs in its terminals. Released disk images are Developer ID signed and notarized; a source build is ad-hoc signed. Read `project.yml` and `scripts/make-dmg.sh` if that matters.
 
 ### Coordination and usage data
 

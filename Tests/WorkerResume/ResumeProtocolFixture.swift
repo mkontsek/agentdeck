@@ -14,6 +14,10 @@ enum ResumeProtocolFixture {
             require 'base64'
             STDOUT.sync = true
             mode = '\(mode)'
+            if mode == 'stuck'
+              Signal.trap('TERM', 'IGNORE')
+              File.write('\(directory.appendingPathComponent("fixture.pid").path)', Process.pid.to_s)
+            end
             metadata = JSON.parse(<<'METADATA')
             \(json)
             METADATA
@@ -73,6 +77,8 @@ enum ResumeProtocolFixture {
                 frame({'method'=>'turn/completed','params'=>{'threadId'=>metadata['id'],'turn'=>{'id'=>'turn97','status'=>'completed'}}})
               end
             end
+            # A stuck proxy outlives stdin EOF and SIGTERM. The bound ends a fixture abandoned by a failed runner.
+            sleep 20 if mode == 'stuck'
             """
         let url = directory.appendingPathComponent("provider-fixture")
         try Data(script.utf8).write(to: url)

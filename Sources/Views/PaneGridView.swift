@@ -208,10 +208,11 @@ struct PaneView: View {
         }
         .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: self.pane.showsTabBar)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: PaneChrome.cornerRadius))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.blue, lineWidth: focused ? 4 : 1.5)
+            // Drawn over the pane's edge; PaneChrome.contentInset keeps session content clear of it.
+            RoundedRectangle(cornerRadius: PaneChrome.cornerRadius)
+                .strokeBorder(Color.blue, lineWidth: PaneChrome.borderWidth(focused: focused))
                 .shadow(color: Color.blue.opacity(focused ? 0.65 : 0), radius: 6)
                 .shadow(color: Color.blue.opacity(focused ? 0.3 : 0), radius: 14)
                 .allowsHitTesting(false)

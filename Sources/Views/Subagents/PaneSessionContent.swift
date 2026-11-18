@@ -23,9 +23,13 @@ struct PaneSessionContent: View {
                     let size =
                         split
                         ? (session.id == sessions.first?.id ? sizing.firstSize : sizing.secondSize) : geometry.size
-                    ManagedSessionContent(session: session)
-                        .frame(width: size.width, height: size.height)
-                        .clipped()
+                    ManagedSessionContent(
+                        session: session,
+                        borderEdges: PaneChrome.borderEdges(
+                            isSplit: split, isHorizontal: horizontal, isFirst: session.id == sessions.first?.id)
+                    )
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
                 }
             }
             .background(Color(nsColor: .separatorColor))
