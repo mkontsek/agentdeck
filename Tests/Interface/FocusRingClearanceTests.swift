@@ -30,6 +30,7 @@ final class FocusRingClearanceTests: XCTestCase {
         XCTAssertEqual(PaneChrome.borderEdges(isSplit: true, isHorizontal: false, isFirst: true), .horizontal)
         XCTAssertEqual(
             PaneChrome.borderEdges(isSplit: true, isHorizontal: false, isFirst: false), [.horizontal, .bottom])
+
     }
 
     /// Adapted from the 0.1.38 gate's `focus-border-column0-metrics.swift`: the share of a first-column glyph's ink
@@ -99,7 +100,8 @@ final class FocusRingClearanceTests: XCTestCase {
                     XCTAssertFalse(ringCovers(layout.frame, pane: pane), context)
                     XCTAssertGreaterThan(layout.columns, 0, context)
                     XCTAssertGreaterThan(layout.rows, 0, context)
-                    try assertRenderedRing(in: host, clears: layout.frame, focused: focused, context: context)
+                    try assertRenderedRing(
+                        in: host, clears: layout.frame, focused: focused, dark: scheme == .dark, context: context)
                 }
                 XCTAssertEqual(layouts[1], layouts[0], "\(scheme) \(points) pt: losing focus resized the terminal")
                 XCTAssertEqual(layouts[2], layouts[0], "\(scheme) \(points) pt: gaining focus resized the terminal")
@@ -164,8 +166,11 @@ final class FocusRingClearanceTests: XCTestCase {
     }
 
     /// Scans the rendered pane along the terminal's middle row and middle column. The opaque border colour must
-    /// stop before the terminal on the left, right and bottom; the translucent glow is not the border.
-    private func assertRenderedRing(in host: NSView, clears terminal: CGRect, focused: Bool, context: String) throws {
+    /// stop before the terminal on the left, right and bottom; the translucent glow is not the border. Without the
+    /// glow, the gutter must continue the terminal background.
+    private func assertRenderedRing(
+        in host: NSView, clears terminal: CGRect, focused: Bool, dark: Bool, context: String
+    ) throws {
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let name = "agentdeck-focus-ring-\(context.replacingOccurrences(of: " ", with: "-")).png"
@@ -185,6 +190,13 @@ final class FocusRingClearanceTests: XCTestCase {
             (Int(terminal.minX * scale)..<Int(terminal.maxX * scale)).filter { isBorder($0, row) }.count
             + (Int(terminal.minY * scale)..<Int(terminal.maxY * scale)).filter { isBorder(column, $0) }.count
         XCTAssertEqual(covered, 0, "border pixels over the terminal, \(context)")
+        guard !focused else { return }
+        // Compared in the bitmap's own colour space; the idle border ends at 1.5 pt and the terminal starts at 6.
+        let gutter = try XCTUnwrap(bitmap.colorAt(x: Int((PaneChrome.contentInset - 1) * scale), y: row))
+        let background = try XCTUnwrap(TerminalHost.backgroundColor(dark: dark).usingColorSpace(bitmap.colorSpace))
+        XCTAssertEqual(gutter.redComponent, background.redComponent, accuracy: 0.02, "gutter red, \(context)")
+        XCTAssertEqual(gutter.greenComponent, background.greenComponent, accuracy: 0.02, "gutter green, \(context)")
+        XCTAssertEqual(gutter.blueComponent, background.blueComponent, accuracy: 0.02, "gutter blue, \(context)")
     }
 }
 

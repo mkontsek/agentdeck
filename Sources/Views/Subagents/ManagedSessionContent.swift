@@ -5,6 +5,9 @@ struct ManagedSessionContent: View {
     let session: ManagedSession
     /// Edges that meet the mini-window border and are kept clear of it by `PaneChrome.contentInset`.
     var borderEdges: Edge.Set = []
+    /// Whether this view paints its own gutter. A lone session leaves that to the fill `PaneSessionContent` already
+    /// has: one more fill behind every terminal measurably slowed canvas scrolling.
+    var fillsGutter = false
 
     var body: some View {
         Group {
@@ -15,7 +18,7 @@ struct ManagedSessionContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(borderEdges, PaneChrome.contentInset)
-        .background(gutter)
+        .background(fillsGutter ? gutter : .clear)
         .overlay {
             if store.focusedSessionID != session.id {
                 PaneFocusOverlay {
@@ -25,9 +28,7 @@ struct ManagedSessionContent: View {
         }
     }
 
-    /// A terminal's gutter continues its background, so the inset reads as terminal padding.
     private var gutter: Color {
-        guard session.kind == .cli, store.terminals.view(for: session.id) != nil else { return .clear }
-        return Color(nsColor: TerminalHost.backgroundColor(dark: store.terminals.dark))
+        store.terminalGutterColor(for: session).map { Color(nsColor: $0) } ?? .clear
     }
 }

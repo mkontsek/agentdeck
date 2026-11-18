@@ -75,6 +75,13 @@ extension AppStore {
         return size.formatted(.number.precision(.fractionLength(0...1)))
     }
 
+    /// The colour of the inset around a terminal's text: the terminal's own background, so the inset reads as
+    /// terminal padding. Nil for a session that shows no terminal view.
+    func terminalGutterColor(for session: ManagedSession?) -> NSColor? {
+        guard let session, session.kind == .cli, terminals.view(for: session.id) != nil else { return nil }
+        return TerminalHost.backgroundColor(dark: terminals.dark)
+    }
+
     func font(for session: ManagedSession) -> NSFont {
         let size = textSize(for: session)
         return NSFont(name: settings.fontName, size: size)

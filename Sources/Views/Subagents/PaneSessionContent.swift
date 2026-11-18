@@ -26,13 +26,19 @@ struct PaneSessionContent: View {
                     ManagedSessionContent(
                         session: session,
                         borderEdges: PaneChrome.borderEdges(
-                            isSplit: split, isHorizontal: horizontal, isFirst: session.id == sessions.first?.id)
+                            isSplit: split, isHorizontal: horizontal, isFirst: session.id == sessions.first?.id),
+                        fillsGutter: split
                     )
                     .frame(width: size.width, height: size.height)
                     .clipped()
                 }
             }
-            .background(Color(nsColor: .separatorColor))
+            // A split shows this fill as its divider. A lone terminal shows it as the gutter around its text.
+            .background(
+                Color(
+                    nsColor: split
+                        ? .separatorColor : store.terminalGutterColor(for: sessions.first) ?? .separatorColor)
+            )
             .overlay(alignment: .topLeading) {
                 if split, let owner = sessions.first {
                     BrowserSplitDivider(

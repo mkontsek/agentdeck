@@ -14,6 +14,16 @@ on every focus change and make the CLI repaint. The cost is paid once: a termina
 is 12 points narrower and 6 points shorter, one or two columns and at most one
 row at 12 pt, when 0.1.39 first lays it out.
 
+The gutter takes the terminal's background so the inset reads as terminal
+padding. The first version painted it with one SwiftUI fill behind every
+terminal. In the 20-terminal scroll fixture that fill, not the padding, cost 2
+to 4 ms per frame and 1 to 4 ms of median p95 input latency in interleaved runs
+against 0.1.38. A lone session now recolours the fill its content area already
+had, and only a terminal-and-browser split adds one; that build measures the
+same as 0.1.38. Painting the gutter from the AppKit container was tried and
+dropped: a layer colour is invisible to the offscreen captures the rendering
+tests rely on.
+
 For distribution, Release builds enable the hardened runtime and `make dmg`
 produces a Developer ID signed, notarized and stapled disk image. The app ships
 with no entitlements. It runs no JIT, loads no third-party libraries and sends no
