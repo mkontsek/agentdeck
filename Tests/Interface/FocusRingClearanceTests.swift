@@ -109,6 +109,58 @@ final class FocusRingClearanceTests: XCTestCase {
         }
     }
 
+    /// A terminal beside or above its owned browser meets the border on fewer edges and paints its own gutter.
+    func testSplitPaneKeepsTheTerminalClearOfTheRingAndPaintsItsGutter() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = AppStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer {
+            store.shutdown()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        store.settings.workspaceMode = .sessions
+        let session = store.addSession(ManagedSession(name: "Fixture", kind: .cli), start: false)
+        store.runtime[session.id]?.isRunning = true
+        let terminal = store.terminals.makeView(for: session.id, font: store.font(for: session))
+        // The browser is never started; a stopped browser pane shows only its start button.
+        var browser = ManagedSession(name: "Fixture browser", kind: .browser)
+        browser.agentOwnerID = session.id
+        browser = store.addSession(browser, start: false)
+        let members = store.visibleSessions(in: try XCTUnwrap(store.pane(containing: session.id))).map(\.id)
+        XCTAssertEqual(members, [session.id, browser.id])
+        store.terminals.applyTheme(dark: true)
+        store.focusedSessionID = nil
+        let inset = PaneChrome.contentInset
+
+        for size in [CGSize(width: 900, height: 400), CGSize(width: 440, height: 400)] {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            let host = NSHostingView(
+                rootView: PaneFixture(sessionID: session.id, size: size).environmentObject(store)
+                    .preferredColorScheme(.dark))
+            window.contentView = host
+            window.orderFrontRegardless()
+            try await Task.sleep(for: .milliseconds(350))
+            host.layoutSubtreeIfNeeded()
+            let context = "split \(Int(size.width))x\(Int(size.height))"
+            let layout = try self.layout(of: terminal, in: host)
+            let pane = CGRect(origin: .zero, size: host.bounds.size)
+            XCTAssertEqual(layout.frame.minX, inset, accuracy: 0.01, context)
+            if SubagentSplitLayout.automatic.isHorizontal(in: size) {
+                // Side by side: the terminal meets the bottom border and ends at the divider.
+                XCTAssertEqual(pane.maxY - layout.frame.maxY, inset, accuracy: 0.01, context)
+                XCTAssertLessThan(layout.frame.maxX, pane.midX + 100, context)
+            } else {
+                // Stacked: the terminal meets both side borders and ends at the divider.
+                XCTAssertEqual(pane.maxX - layout.frame.maxX, inset, accuracy: 0.01, context)
+                XCTAssertLessThan(layout.frame.maxY, pane.maxY - 100, context)
+            }
+            XCTAssertFalse(ringCovers(layout.frame, pane: pane), context)
+            try assertRenderedRing(in: host, clears: layout.frame, focused: false, dark: true, context: context)
+        }
+    }
+
     // MARK: Geometry
 
     /// Session content in pane coordinates (origin top-left): below a header, inset from the other three edges.
