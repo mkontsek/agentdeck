@@ -290,9 +290,9 @@ struct CLIProfile: Codable, Identifiable, Hashable {
         CLIProfile(
             id: "codex", name: "Codex",
             command:
-                "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c {briefingConfig}",
+                "codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c features.multi_agent_v2.disable_native_tools=true -c {codexDelegationConfig} -c {briefingConfig}",
             resumeCommand:
-                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c {briefingConfig}",
+                "codex resume --last --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c features.multi_agent_v2.disable_native_tools=true -c {codexDelegationConfig} -c {briefingConfig}",
             notes:
                 "MCP and persistent AgentDeck developer instructions are supplied via -c overrides, including on resume and conversation reset."
         ),

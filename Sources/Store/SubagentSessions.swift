@@ -226,4 +226,16 @@ extension AppStore {
             mainRole
             + "Automatic subagents are enabled. For substantial implementation or research work, call delegate_task with a concrete scope and instructions, then promptly end your turn so this main conversation remains ready for new prompts. Keep quick answers here. Do not block waiting or repeatedly poll; workers report results back. Respect any user instruction to work directly. Workers and their owned browsers appear in separate connected mini-windows."
     }
+
+    /// Codex emits its own delegation mode after developer_instructions. Configure that mode at launch,
+    /// rather than trying to override it with an AGENTS file or enabling Codex's separate worker pool.
+    func codexDelegationConfig(for session: ManagedSession) -> String {
+        var policy =
+            "AgentDeck manages worker orchestration. Use only AgentDeck MCP tools for agent coordination; do not use native Codex collaboration tools. "
+        policy += subagentBriefing(for: session)
+        if session.delegatedTaskID == nil, !canDelegate(from: session.id) {
+            policy += " Automatic AgentDeck delegation is disabled for this session. Do not create workers."
+        }
+        return "features.multi_agent_v2.multi_agent_mode_hint_text=" + BriefingInstructions.tomlString(policy)
+    }
 }

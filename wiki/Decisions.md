@@ -1,5 +1,43 @@
 # Decisions
 
+## 2026-11-20: Keep Codex delegation inside AgentDeck
+
+Codex CLI 0.171.0 renders a separate `<multi_agent_mode>` instruction after the
+AgentDeck developer briefing. With default configuration it revokes earlier
+proactive delegation instructions, even when AgentDeck's `automaticSubagents`
+is true. A fresh `codex debug prompt-input` reproduced the exact conflict without
+reading any saved conversation. The shipped AgentDeck launch templates supplied
+the MCP URL and developer briefing but no runtime delegation policy.
+
+Set `features.multi_agent_v2.multi_agent_mode_hint_text` to the session's AgentDeck
+policy and `features.multi_agent_v2.disable_native_tools=true` on fresh and resumed
+Codex launches. The installed provider accepts these options under strict startup
+validation. Prompt rendering replaces the restrictive mode and removes the native
+collaboration role. The 0.171.0 protocol's `multiAgentMode` request fields are
+deprecated and ignored, and its response field always reports `explicitRequestOnly`;
+that receipt is not evidence of the rendered policy. The native default follows
+reasoning effort: local prompt probes at `xhigh` restrict delegation and `ultra`
+enables native proactive collaboration. Keep the user's reasoning choice unchanged.
+An enabled main delegates substantial work through AgentDeck
+and promptly ends its turn; a worker cannot recruit; a disabled main cannot
+create workers. Native Codex proactive mode would create a second worker system
+outside AgentDeck's task ownership, limits, windows and inbox, so it is unsuitable.
+
+Migrate only exact shipped launch/resume templates, independently, and preserve
+custom profiles. Do not rewrite global Codex configuration or AGENTS rules.
+Already-running sessions retain their injected instructions. A still-loaded
+thread also ignores replacement configuration on resume. After integrating and
+installing the change, let active workers finish, stop affected CLI sessions and
+safely restart the Codex daemon before reopening saved conversations. Do not
+interrupt active workers to activate it. Integration tests use a disposable
+app-server socket and temporary provider home with synthetic saved history.
+Synthetic turns target a loopback provider that captures and rejects
+requests, verifying the actual runtime policy and tool list on start and resume
+without external inference or tool execution. A legacy cold resume preserves old
+instruction messages and appends the current custom mode after them; its outgoing
+tool list excludes native collaboration. No test or implementation claims to
+rewrite instructions already injected into an active conversation.
+
 ## 2026-11-18: Content inset under the focus ring; hardened runtime and a notarized disk image
 
 The 0.1.38 gate measured the 4-point focus ring hiding 50–59 % of the first text
