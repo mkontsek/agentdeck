@@ -280,6 +280,7 @@ struct PaneHeader: View {
     var compact: Bool = false
     var onMove: (CGSize) -> Void = { _ in }
     var onMoveEnd: (CGSize) -> Void = { _ in }
+    @State private var renameTarget: ManagedSession?
 
     private var focused: Bool { store.focusedSessionID == session.id }
 
@@ -322,6 +323,10 @@ struct PaneHeader: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(focused ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
         .contentShape(Rectangle())
+        .sheet(item: $renameTarget) { target in
+            RenameSessionSheet(session: target)
+                .environmentObject(store)
+        }
     }
 
     private var fontControls: some View {
@@ -356,6 +361,8 @@ struct PaneHeader: View {
     }
 
     @ViewBuilder private var menuItems: some View {
+        Button("Rename…") { renameTarget = store.session(session.id) }
+        Divider()
         if let owner = store.browserOwner(for: session) {
             Toggle(
                 "Split terminal and browser",

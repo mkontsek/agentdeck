@@ -1,5 +1,7 @@
 # Connected mini-windows
 
+Use **Window actions (⋯) → Rename…** to change the selected tab’s name in the mini-window header, tab and sidebar. The dialog starts with the current name; Enter saves and Escape cancels. Blank names are rejected and surrounding whitespace is trimmed. The name is saved across restarts. Other tabs keep their own names, and renaming preserves the running terminal or browser.
+
 Each subagent has an independent movable/resizable AgentDeck mini-window. Its browser tabs live inside that window, alongside its terminal. Terminal/browser split mode is the default; wide windows show both side by side and compact windows stack them. Window actions → Split terminal and browser switches back to single-tab presentation and persists per owner. Ordinary agents retain their existing tab groups; browser ownership remains per agent.
 
 Drag the divider between the terminal and browser to change their share of the mini-window. The vertical divider moves left/right; in compact stacked windows it moves up/down. Double-click it to restore equal sizes. The ratio is saved per agent across restarts and window resizing. Both sides retain a usable minimum size; expanding again restores the preferred ratio. The divider also exposes an adjustable accessibility control. Dragging preserves keyboard focus and the existing terminal/browser instances.

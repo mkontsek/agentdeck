@@ -393,6 +393,15 @@ final class AppStore: ObservableObject {
         scheduleSave()
     }
 
+    @discardableResult
+    func renameSession(_ id: UUID, to name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, var session = session(id) else { return false }
+        session.name = name
+        updateSession(session)
+        return true
+    }
+
     var mcpBaseURL: String { "http://127.0.0.1:\(settings.mcpPort)" }
     func mcpURL(for id: UUID) -> String { "\(mcpBaseURL)/mcp/\(id.uuidString)" }
     func mcpConfigPath(for id: UUID) -> String {

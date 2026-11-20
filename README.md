@@ -100,6 +100,7 @@ Tabs:
 - **+** or **⌘T** starts another instance of the pane's CLI in the same directory, always as a fresh conversation.
 - Tabs have independent terminals, output, status, tasks and MCP identities; hidden tabs keep running.
 - **⇧⌘[ / ⇧⌘]** cycles tabs; a tab's **×** closes only that session; closing the last tab removes the mini-window.
+- **Window actions (⋯) → Rename…** changes the selected tab’s name in the mini-window header, tab and sidebar. Enter saves, Escape cancels; names persist across restarts.
 - New tabs inherit font and launch preferences, not the first prompt or the orchestrator role. **⌘N** still makes a separate mini-window.
 - Position, size, tab order and selected tabs persist, also in Grid and maximized views.
 - Tabs from a worktree share it; remove the other sessions using it before deleting the worktree.
