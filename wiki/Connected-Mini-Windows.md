@@ -39,10 +39,6 @@ Main [Terminal | Browser tabs] ──┐
 - Migration separates legacy nested workers and folds standalone owned-browser panes into their agent windows. Session IDs, parent/task ownership, worktrees, provider checkpoints, URLs and shared/isolated profile IDs remain unchanged. Reapplying migration is a no-op. Standalone user browser windows remain independent.
 - Closing a parent promotes surviving workers; closing an owner removes only its owned browser tabs. Closing one browser tab retains its siblings. Shared sign-ins do not grant another agent access to a browser tab.
 
-## Demo screenshots
-
-The toolbar’s **Demo mode** toggle covers every mini-window with opaque synthetic text and example browser content. Real names, URLs, paths, stats and task text are not used by the demo views. Sidebars, the board, inspector, usage and log panels are hidden for the screenshot; their preferences remain unchanged. Live native content is inaccessible to pointer/keyboard input while masked. Existing processes and browser controllers keep running. Toggle off to restore the live view and focus. Demo mode is temporary and is off on launch. It masks the AgentDeck main window, not separate browser popup windows or other applications.
-
 ## Rendering and verification
 
 Native focus changes follow explicit pane selection or real pointer/Tab navigation. Late terminal/browser attachment cannot replace an existing editor. A responder-boundary guard rejects WebKit autofocus before AppKit resigns the active editor, including selected pages trying to take a separate URL/text field. No draft or selection is inspected or copied. Worker coordination remains in the durable inbox from task79; task60 negotiated paste/Enter remains exclusive to explicit user input.

@@ -59,7 +59,7 @@ extension AppStore {
     func focusSession(_ id: UUID) {
         guard session(id) != nil else { return }
         focusedSessionID = id
-        guard !isDemoMode, settings.workspaceMode == .sessions else { return }
+        guard settings.workspaceMode == .sessions else { return }
         if let terminal = terminals.view(for: id) {
             terminal.defersGlassBallDisplay = false
             terminal.isHidden = false

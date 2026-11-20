@@ -66,7 +66,7 @@ private struct BrowserInner: View {
             WebViewRepresentable(
                 webView: controller.webView,
                 zoom: store.browserZoomOverride(for: session),
-                focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
+                focused: !collapsed && store.focusedSessionID == session.id
                     && store.settings.workspaceMode == .sessions, collapsed: collapsed, transitioning: transitioning)
         }
     }

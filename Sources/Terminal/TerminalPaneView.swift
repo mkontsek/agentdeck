@@ -12,7 +12,7 @@ struct TerminalPaneView: View {
         ZStack {
             TerminalRepresentable(
                 terminal: store.terminals.view(for: session.id), font: store.font(for: session),
-                focused: !collapsed && !store.isDemoMode && store.focusedSessionID == session.id
+                focused: !collapsed && store.focusedSessionID == session.id
                     && store.settings.workspaceMode == .sessions,
                 generation: rt?.generation ?? 0, collapsed: collapsed, transitioning: transitioning)
             if rt?.isRunning != true {

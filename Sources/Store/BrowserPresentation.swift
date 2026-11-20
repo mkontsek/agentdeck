@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 extension AppStore {
     func browserOwner(for session: ManagedSession) -> ManagedSession? {
@@ -42,10 +42,5 @@ extension AppStore {
             focusSession(id)
             maximizedSessionID = id
         }
-    }
-
-    func setDemoMode(_ enabled: Bool) {
-        isDemoMode = enabled
-        if enabled { NSApp.keyWindow?.makeFirstResponder(nil) }
     }
 }

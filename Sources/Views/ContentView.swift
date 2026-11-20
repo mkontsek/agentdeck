@@ -22,7 +22,7 @@ struct ContentView: View {
 
     var body: some View {
         HSplitView {
-            if !store.isDemoMode && store.settings.showSidebar {
+            if store.settings.showSidebar {
                 SidebarView()
                     .frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
                     .transition(WorkspaceMotion.panel(edge: .leading, reduceMotion: reduceMotion))
@@ -30,22 +30,22 @@ struct ContentView: View {
             VSplitView {
                 ZStack {
                     PaneGridView()
-                        .opacity(store.isDemoMode || store.settings.workspaceMode == .sessions ? 1 : 0)
-                        .allowsHitTesting(store.isDemoMode || store.settings.workspaceMode == .sessions)
-                        .accessibilityHidden(!store.isDemoMode && store.settings.workspaceMode != .sessions)
-                    if !store.isDemoMode && store.settings.workspaceMode == .board {
+                        .opacity(store.settings.workspaceMode == .sessions ? 1 : 0)
+                        .allowsHitTesting(store.settings.workspaceMode == .sessions)
+                        .accessibilityHidden(store.settings.workspaceMode != .sessions)
+                    if store.settings.workspaceMode == .board {
                         CoordinationBoardView().transition(.opacity)
                     }
                 }
                 .frame(minHeight: 220)
-                if !store.isDemoMode && store.settings.showBottomPanel && store.settings.workspaceMode == .sessions {
+                if store.settings.showBottomPanel && store.settings.workspaceMode == .sessions {
                     BottomPanelView()
                         .frame(minHeight: 120, idealHeight: store.settings.bottomPanelHeight)
                         .transition(WorkspaceMotion.panel(edge: .bottom, reduceMotion: reduceMotion))
                 }
             }
             .frame(minWidth: 520)
-            if !store.isDemoMode && store.settings.showInspector {
+            if store.settings.showInspector {
                 InspectorView()
                     .frame(minWidth: 260, idealWidth: 300, maxWidth: 440)
                     .transition(WorkspaceMotion.panel(edge: .trailing, reduceMotion: reduceMotion))
@@ -53,7 +53,7 @@ struct ContentView: View {
         }
         .toolbar { toolbarItems }
         .overlay(alignment: .topLeading) {
-            if !store.isDemoMode && store.settings.showUsagePanel {
+            if store.settings.showUsagePanel {
                 GeometryReader { geometry in
                     CLIUsagePanel(monitor: store.usageMonitor, viewport: geometry.size)
                 }
@@ -68,13 +68,8 @@ struct ContentView: View {
         .onChange(of: store.settings.workspaceMode) { _, mode in
             if mode == .board { NSApp.keyWindow?.makeFirstResponder(nil) }
         }
-        .sheet(
-            isPresented: Binding(get: { !store.isDemoMode && store.showNewSession }, set: { store.showNewSession = $0 })
-        ) { NewSessionSheet() }
-        .sheet(
-            isPresented: Binding(
-                get: { !store.isDemoMode && store.showInjectSheet }, set: { store.showInjectSheet = $0 })
-        ) { InjectSheet() }
+        .sheet(isPresented: $store.showNewSession) { NewSessionSheet() }
+        .sheet(isPresented: $store.showInjectSheet) { InjectSheet() }
         .sheet(
             isPresented: Binding(
                 get: { store.resumeWorkerSheetID != nil }, set: { if !$0 { store.resumeWorkerSheetID = nil } })
@@ -84,7 +79,7 @@ struct ContentView: View {
         .alert(
             "AgentDeck",
             isPresented: Binding(
-                get: { !store.isDemoMode && store.lastError != nil }, set: { if !$0 { store.lastError = nil } })
+                get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })
         ) {
             Button("OK") {}
         } message: {
@@ -111,35 +106,31 @@ struct ContentView: View {
             .accessibilityIdentifier("agentdeck-brand")
         }
         ToolbarItemGroup(placement: .navigation) {
-            if !store.isDemoMode {
-                Picker("Workspace", selection: $store.settings.workspaceMode) {
-                    Label("Work", systemImage: "checklist").tag(WorkspaceMode.board)
-                    Label("Sessions", systemImage: "macwindow.on.rectangle").tag(WorkspaceMode.sessions)
-                }.pickerStyle(.segmented).frame(width: 180)
-                Toggle(isOn: $store.settings.showSidebar) { Image(systemName: "sidebar.leading") }
-                    .help("Sessions sidebar (⌥⌘S)")
+            Picker("Workspace", selection: $store.settings.workspaceMode) {
+                Label("Work", systemImage: "checklist").tag(WorkspaceMode.board)
+                Label("Sessions", systemImage: "macwindow.on.rectangle").tag(WorkspaceMode.sessions)
+            }.pickerStyle(.segmented).frame(width: 180)
+            Toggle(isOn: $store.settings.showSidebar) { Image(systemName: "sidebar.leading") }
+                .help("Sessions sidebar (⌥⌘S)")
+            Button {
+                store.showNewSession = true
+            } label: {
+                Label("New Session", systemImage: "plus")
+            }
+            .help("New session (⌘N)")
+            let pending = store.recruits.filter { $0.status == .pending }.count
+            if pending > 0 {
                 Button {
-                    store.showNewSession = true
+                    store.settings.showSidebar = true
                 } label: {
-                    Label("New Session", systemImage: "plus")
+                    Label("\(pending) approval\(pending == 1 ? "" : "s")", systemImage: "person.badge.clock")
                 }
-                .help("New session (⌘N)")
-                let pending = store.recruits.filter { $0.status == .pending }.count
-                if pending > 0 {
-                    Button {
-                        store.settings.showSidebar = true
-                    } label: {
-                        Label("\(pending) approval\(pending == 1 ? "" : "s")", systemImage: "person.badge.clock")
-                    }
-                    .tint(.orange).help(
-                        "An orchestrator wants to recruit a session; open the sidebar to approve or deny")
-                }
+                .tint(.orange).help(
+                    "An orchestrator wants to recruit a session; open the sidebar to approve or deny")
             }
         }
         ToolbarItemGroup(placement: .principal) {
-            if store.isDemoMode {
-                Text("Demo workspace · Synthetic content").foregroundStyle(.secondary)
-            } else if store.settings.workspaceMode == .sessions {
+            if store.settings.workspaceMode == .sessions {
                 Picker("Layout", selection: $store.settings.layoutMode) {
                     Image(systemName: "square.grid.2x2").tag(LayoutMode.grid)
                     Image(systemName: "macwindow.on.rectangle").tag(LayoutMode.canvas)
@@ -194,32 +185,27 @@ struct ContentView: View {
             Toggle("Glass balls", isOn: $store.settings.glassBallSubagents)
                 .help("Collapse unfocused subagents into status balls. Click to expand; focused windows stay open.")
                 .accessibilityIdentifier("glass-ball-subagents")
-            Toggle("Demo mode", isOn: Binding(get: { store.isDemoMode }, set: { store.setDemoMode($0) }))
-                .help("Replace live content and identifiers with synthetic content for screenshots")
-                .accessibilityIdentifier("demo-mode")
-            if !store.isDemoMode {
-                Button {
-                    store.settings.showUsagePanel.toggle()
-                } label: {
-                    Label("CLI usage", systemImage: "chart.bar.xaxis")
-                }.help("Show CLI usage, limits and resets (⌥⌘U)")
-                Button {
-                    store.toggleTheme()
-                } label: {
-                    Image(systemName: store.isDarkTheme ? "sun.max" : "moon")
-                }
-                .help("Toggle light/dark theme (⌥⌘D) · System/Light/Dark in Settings")
-                let up = store.mcpStatus.hasPrefix("listening")
-                Image(systemName: up ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                    .foregroundStyle(up ? Color.green : Color.red)
-                    .help("MCP server " + store.mcpStatus)
-                Toggle(isOn: $store.settings.showBottomPanel) {
-                    Image(systemName: "rectangle.bottomthird.inset.filled")
-                }
-                .help("Task board & log (⌥⌘B)")
-                Toggle(isOn: $store.settings.showInspector) { Image(systemName: "sidebar.trailing") }
-                    .help("Inspector (⌥⌘I)")
+            Button {
+                store.settings.showUsagePanel.toggle()
+            } label: {
+                Label("CLI usage", systemImage: "chart.bar.xaxis")
+            }.help("Show CLI usage, limits and resets (⌥⌘U)")
+            Button {
+                store.toggleTheme()
+            } label: {
+                Image(systemName: store.isDarkTheme ? "sun.max" : "moon")
             }
+            .help("Toggle light/dark theme (⌥⌘D) · System/Light/Dark in Settings")
+            let up = store.mcpStatus.hasPrefix("listening")
+            Image(systemName: up ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                .foregroundStyle(up ? Color.green : Color.red)
+                .help("MCP server " + store.mcpStatus)
+            Toggle(isOn: $store.settings.showBottomPanel) {
+                Image(systemName: "rectangle.bottomthird.inset.filled")
+            }
+            .help("Task board & log (⌥⌘B)")
+            Toggle(isOn: $store.settings.showInspector) { Image(systemName: "sidebar.trailing") }
+                .help("Inspector (⌥⌘I)")
         }
     }
 }

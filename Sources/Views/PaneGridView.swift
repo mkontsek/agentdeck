@@ -46,7 +46,7 @@ struct PaneGridView: View {
                             PaneConnectionsView(
                                 connections: store.paneConnections,
                                 frames: routeFrames,
-                                docks: store.settings.glassBallSubagents && !store.isDemoMode ? docks : [:],
+                                docks: store.settings.glassBallSubagents ? docks : [:],
                                 color: CanvasArrowColor.color(hex: store.settings.arrowColorHex)
                             )
                             .frame(width: extent.width, height: extent.height)
@@ -190,22 +190,8 @@ struct PaneView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: size.width, height: size.height)
-        .opacity(store.isDemoMode ? 0 : 1)
-        .allowsHitTesting(!store.isDemoMode && !collapsed)
-        .accessibilityHidden(store.isDemoMode || collapsed)
-        .overlay {
-            if store.isDemoMode {
-                DemoPaneView(
-                    number: (store.panes.firstIndex { $0.id == self.pane.id } ?? 0) + 1,
-                    split: store.visibleSessions(in: self.pane).count > 1,
-                    movable: isCanvas,
-                    onMove: { offset in
-                        moveOffset = offset
-                        onMove(offset)
-                    },
-                    onMoveEnd: commitMove, onMaximize: { store.toggleMaximize(session.id) })
-            }
-        }
+        .allowsHitTesting(!collapsed)
+        .accessibilityHidden(collapsed)
         .animation(WorkspaceMotion.animation(reduceMotion: reduceMotion), value: self.pane.showsTabBar)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: PaneChrome.cornerRadius))
@@ -260,7 +246,7 @@ struct PaneView: View {
         }
         .offset(x: origin.x, y: origin.y)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(store.isDemoMode ? "Demo mini window" : "\(session.name) mini window")
+        .accessibilityLabel("\(session.name) mini window")
         .accessibilityIdentifier("pane-\(self.pane.id)")
     }
 

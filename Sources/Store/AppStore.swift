@@ -27,7 +27,6 @@ final class AppStore: ObservableObject {
     }
     @Published var cliProfiles: [CLIProfile] = CLIProfile.builtins { didSet { if loaded { scheduleSave() } } }
     @Published var selectedBrowserTabs: [UUID: UUID] = [:]
-    @Published var isDemoMode = false
     @Published var selectedPaneTabs: [UUID: UUID] = [:]
     @Published var expandedSubagentTabs: [UUID: UUID] = [:]
     @Published var finishedSessionIDs: Set<UUID> = []

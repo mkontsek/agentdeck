@@ -1,10 +1,9 @@
 import AppKit
 import SwiftUI
-import Vision
 import XCTest
 
 @MainActor
-final class SplitDemoRenderingTests: XCTestCase {
+final class SplitRenderingTests: XCTestCase {
     func testSplitFocusAndNativeDoubleClickRestoreKeepHosts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = AppStore(stateURL: directory.appendingPathComponent("state.json"))
@@ -67,12 +66,16 @@ final class SplitDemoRenderingTests: XCTestCase {
         try snapshot(host, name: "agentdeck-split-restored")
     }
 
-    func testDemoMasksLiveIdentifiersInLightAndDarkAndRestoresSession() async throws {
+    func testWorkspacePanelsAndThemesKeepLiveSplitContentAndFocus() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = AppStore(stateURL: directory.appendingPathComponent("state.json"))
         store.settings.workspaceMode = .sessions
-        var owner = ManagedSession(name: "CONFIDENTIAL CUSTOMER", kind: .cli)
-        owner.paneSize = PaneSize(width: 650, height: 570)
+        store.settings.showSidebar = false
+        store.settings.showInspector = false
+        store.settings.showBottomPanel = false
+        store.settings.showUsagePanel = false
+        var owner = ManagedSession(name: "Live split fixture", kind: .cli)
+        owner.paneSize = PaneSize(width: 650, height: 450)
         owner.canvasPosition = PanePoint(x: 16, y: 16)
         owner = store.addSession(owner, start: false)
         let terminal = store.terminals.makeView(for: owner.id, font: store.font(for: owner))
@@ -81,10 +84,8 @@ final class SplitDemoRenderingTests: XCTestCase {
             executable: "/bin/sh", args: ["-c", "stty raw -echo; printf READY; exec /bin/cat"],
             environment: ["TERM=xterm-256color", "PATH=/usr/bin:/bin"], currentDirectory: "/tmp")
         let controller = try XCTUnwrap(store.agentBrowserController(for: owner.id))
-        controller.webView.loadHTMLString("<h1>CONFIDENTIAL BROWSER</h1>", baseURL: nil)
-        store.settings.showSidebar = true
-        store.settings.showInspector = true
-        store.settings.showBottomPanel = true
+        let browser = try XCTUnwrap(store.agentBrowser(for: owner.id))
+        controller.webView.loadHTMLString("<h1>Live browser fixture</h1>", baseURL: nil)
         let window = makeWindow()
         let host = NSHostingView(rootView: ContentView().environmentObject(store).preferredColorScheme(.light))
         window.contentView = host
@@ -95,37 +96,60 @@ final class SplitDemoRenderingTests: XCTestCase {
             BrowserHost.deleteProfile(store.settings.sharedBrowserProfileID)
             try? FileManager.default.removeItem(at: directory)
         }
-        try await Task.sleep(for: .milliseconds(500))
-        let names = store.sessions.map(\.name)
+        for _ in 0..<200 where !store.terminals.visibleLines(id: owner.id).joined().contains("READY") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(store.terminals.visibleLines(id: owner.id).joined().contains("READY"))
+        try await Task.sleep(for: .milliseconds(350))
+        let container = try XCTUnwrap(terminal.superview)
+        let browserContainer = try XCTUnwrap(controller.webView.superview)
         let ids = store.sessions.map(\.id)
         let position = store.session(owner.id)?.canvasPosition
-        store.setDemoMode(true)
+        let size = store.session(owner.id)?.paneSize
         for dark in [false, true] {
             host.rootView = ContentView().environmentObject(store).preferredColorScheme(dark ? .dark : .light)
-            try await Task.sleep(for: .milliseconds(300))
-            let bitmap = try snapshot(host, name: "agentdeck-demo-\(dark ? "dark" : "light")")
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .fast
-            try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage)).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            XCTAssertTrue(text.contains("Agent 1"), text)
-            XCTAssertFalse(text.localizedCaseInsensitiveContains("CONFIDENTIAL"), text)
-            XCTAssertFalse(text.contains(owner.id.uuidString), text)
+            store.settings.showSidebar = dark
+            store.settings.showInspector = dark
+            store.settings.showBottomPanel = dark
+            try await Task.sleep(for: .milliseconds(350))
+            store.selectTab(browser.id)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(controller.webView.allowsKeyboardFocus)
+            store.selectTab(owner.id)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(window.firstResponder === terminal)
+            XCTAssertFalse(terminal.isHidden)
+            XCTAssertFalse(controller.webView.isHidden)
+            try snapshot(host, name: "agentdeck-live-split-\(dark ? "dark" : "light")")
+
+            store.settings.workspaceMode = .board
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertFalse(window.firstResponder === terminal)
+            XCTAssertFalse(controller.webView.allowsKeyboardFocus)
+            store.focusSession(owner.id)
+            XCTAssertFalse(window.firstResponder === terminal, "Board selection must not focus hidden native content")
+            let output = "WORKSPACE_OUTPUT_\(dark)"
+            terminal.send(txt: output)
+            for _ in 0..<200 where !store.terminals.visibleLines(id: owner.id).joined().contains(output) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(store.terminals.visibleLines(id: owner.id).joined().contains(output))
+
+            store.settings.workspaceMode = .sessions
+            try await Task.sleep(for: .milliseconds(350))
+            store.focusSession(owner.id)
+            XCTAssertTrue(window.firstResponder === terminal)
+            XCTAssertTrue(terminal.superview === container)
+            XCTAssertTrue(controller.webView.superview === browserContainer)
+            XCTAssertTrue(store.browsers.controllers[browser.id] === controller)
+            XCTAssertTrue(store.terminals.isRunning(owner.id))
+            XCTAssertEqual(store.sessions.map(\.id), ids)
+            XCTAssertEqual(store.session(owner.id)?.canvasPosition, position)
+            XCTAssertEqual(store.session(owner.id)?.paneSize, size)
+            XCTAssertEqual(store.settings.showSidebar, dark)
+            XCTAssertEqual(store.settings.showInspector, dark)
+            XCTAssertEqual(store.settings.showBottomPanel, dark)
         }
-        XCTAssertFalse(controller.webView.allowsKeyboardFocus)
-        XCTAssertFalse(window.firstResponder === terminal)
-        let bytes = terminal.diagnostics.bytesFed
-        terminal.send(txt: "demo-live-output")
-        for _ in 0..<200 where terminal.diagnostics.bytesFed <= bytes { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertGreaterThan(terminal.diagnostics.bytesFed, bytes)
-        store.setDemoMode(false)
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(store.sessions.map(\.id), ids)
-        XCTAssertEqual(store.sessions.map(\.name), names)
-        XCTAssertEqual(store.session(owner.id)?.canvasPosition, position)
-        XCTAssertTrue(store.terminals.isRunning(owner.id))
-        XCTAssertTrue(window.firstResponder === terminal)
-        XCTAssertTrue(store.settings.showSidebar && store.settings.showInspector && store.settings.showBottomPanel)
     }
 
     private func makeWindow() -> NSWindow {

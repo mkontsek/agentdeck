@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-20: Remove Demo mode
+
+The user requested removal of the screenshot mode. Remove its toolbar control, transient store state, synthetic pane view and masking/focus exceptions. Normal panes render the retained terminal/browser hosts; sidebar, board, inspector, usage and log visibility follow their own controls. There is no replacement masking mode and no persisted data migration. This supersedes only the Demo-mode portion of the 2026-11-08 screenshot-mode decision below; browser splits, width fitting, double-click expansion and connectors remain.
+
 ## 2026-11-18: Content inset under the focus ring; hardened runtime and a notarized disk image
 
 The 0.1.38 gate measured the 4-point focus ring hiding 50–59 % of the first text

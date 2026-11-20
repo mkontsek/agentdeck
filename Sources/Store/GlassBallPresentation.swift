@@ -18,12 +18,12 @@ extension AppStore {
     }
 
     func collapsesToGlassBall(_ pane: SessionPane) -> Bool {
-        settings.glassBallSubagents && !isDemoMode && maximizedSessionID == nil
+        settings.glassBallSubagents && maximizedSessionID == nil
             && !pane.tabs.contains { $0.id == focusedSessionID } && glassBallOwner(in: pane) != nil
     }
 
     func collapseToGlassBall(_ id: UUID) {
-        guard settings.glassBallSubagents, !isDemoMode, let pane = pane(containing: id),
+        guard settings.glassBallSubagents, let pane = pane(containing: id),
             glassBallOwner(in: pane) != nil
         else { return }
         if pane.tabs.contains(where: { $0.id == maximizedSessionID }) { maximizedSessionID = nil }
