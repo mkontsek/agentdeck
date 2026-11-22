@@ -1,6 +1,20 @@
 import Foundation
 
 extension CLIProfile {
+    /// Keep custom launch/resume templates byte-for-byte; upgrade each exact shipped template independently.
+    func adoptingCodexDelegationDefaults() -> CLIProfile {
+        guard id == "codex", let builtin = Self.builtins.first(where: { $0.id == id }) else { return self }
+        let arguments =
+            "--dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url=\"{mcpUrl}\"' -c {briefingConfig}"
+        var updated = self
+        if command == "codex " + arguments { updated.command = builtin.command }
+        if resumeCommand == "codex resume --last " + arguments { updated.resumeCommand = builtin.resumeCommand }
+        if updated.resumeCommand == nil, updated.command == builtin.command {
+            updated.resumeCommand = builtin.resumeCommand
+        }
+        return updated
+    }
+
     /// Upgrade only commands previously shipped by AgentDeck, preserving all other profile fields.
     func migratingUnrestrictedDefault() -> CLIProfile {
         let previousCommands = [

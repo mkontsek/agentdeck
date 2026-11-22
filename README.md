@@ -169,7 +169,7 @@ Built-in profiles:
 | Profile | Launch command | MCP |
 |---|---|---|
 | Claude Code | `claude --dangerously-skip-permissions --mcp-config "{mcpConfigPath}" --append-system-prompt-file "{briefingPath}"` | automatic |
-| Codex | `codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url="{mcpUrl}"'` | automatic |
+| Codex | `codex --dangerously-bypass-approvals-and-sandbox -c 'mcp_servers.agentdeck.url="{mcpUrl}"' -c features.multi_agent_v2.disable_native_tools=true -c {codexDelegationConfig} -c {briefingConfig}` | automatic |
 | Gemini CLI | `gemini --yolo` | once: `gemini mcp add -t http -s user agentdeck $AGENTDECK_MCP_URL` |
 | Antigravity | `agy --dangerously-skip-permissions` | configure a remote server in `/mcp` with the session MCP URL |
 | Grok Build | `grok --always-approve` | configure with `grok mcp` using `$AGENTDECK_MCP_URL` |
@@ -290,8 +290,9 @@ An Orchestrator can also call `recruit_session(name="Tests", cli_profile="codex"
 ## 6. Adding a CLI type
 
 - Settings → **CLI Profiles** → `+`. A profile is a zsh snippet run as `zsh -l -i -c "<command>"` in the session directory.
-- Placeholders: `{mcpUrl}` `{mcpConfigPath}` `{briefingPath}` `{briefing}` `{briefingConfig}` `{sessionId}` `{sessionName}` `{cwd}`. A *resume command* also accepts `{conversationId}` for a captured provider conversation.
+- Placeholders: `{mcpUrl}` `{mcpConfigPath}` `{briefingPath}` `{briefing}` `{briefingConfig}` `{codexDelegationConfig}` `{sessionId}` `{sessionName}` `{cwd}`. A *resume command* also accepts `{conversationId}` for a captured provider conversation.
 - Use `{briefingPath}` for an instruction file, `{briefing}` for literal briefing text, or `{briefingConfig}` for Codex's TOML-encoded `developer_instructions` assignment. Add the placeholder to both launch and resume commands; the briefing is then never typed.
+- Codex 0.171.0 has a separate native delegation mode. Use `-c {codexDelegationConfig}` and `-c features.multi_agent_v2.disable_native_tools=true` in both Codex templates to apply AgentDeck's main/worker policy and keep workers in AgentDeck. Exact shipped templates migrate automatically; custom templates remain unchanged. Still-loaded Codex threads ignore new resume options: let active work finish, stop affected CLI sessions, safely restart the Codex daemon, then reopen saved conversations with the updated profiles.
 - Placeholders are inserted as literal data in unquoted, single-quoted and double-quoted arguments. Use environment variables for here-documents and nested substitutions.
 - *Submit delay* applies only to explicit Inject Note actions. Fresh initial tasks use provider launch arguments, with `{initialPrompt}` available to custom commands. Turn off *Speaks MCP* for plain shells; background coordination requires MCP.
 - Profiles live in `state.json`; built-ins are re-added if missing.

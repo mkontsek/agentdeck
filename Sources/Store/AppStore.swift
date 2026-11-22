@@ -217,6 +217,7 @@ final class AppStore: ObservableObject {
             cliProfiles = cliProfiles.map { $0.migratingUnrestrictedDefault() }
         }
         cliProfiles = cliProfiles.map { $0.adoptingBriefingAndResumeDefaults() }
+        cliProfiles = cliProfiles.map { $0.adoptingCodexDelegationDefaults() }
         // Make sure new built-in profiles show up for users with an older profile list.
         for b in CLIProfile.builtins where !cliProfiles.contains(where: { $0.id == b.id }) { cliProfiles.append(b) }
         selectedBrowserTabs = st.selectedBrowserTabs
@@ -461,6 +462,7 @@ final class AppStore: ObservableObject {
                 "briefingPath": briefingPath(for: s.id),
                 "briefing": briefingText(for: s),
                 "briefingConfig": "developer_instructions=" + BriefingInstructions.tomlString(briefingText(for: s)),
+                "codexDelegationConfig": codexDelegationConfig(for: s),
                 "sessionId": s.id.uuidString, "sessionName": s.name, "cwd": s.effectiveDirectory,
                 "conversationId": checkpoint?.conversationID ?? "", "initialPrompt": prompt ?? "",
             ])

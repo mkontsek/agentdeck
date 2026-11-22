@@ -19,6 +19,8 @@ final class CLIProfileTests: XCTestCase {
             "codex": [
                 "--dangerously-bypass-approvals-and-sandbox", "-c",
                 "mcp_servers.agentdeck.url=\"\(store.mcpURL(for: session.id))\"",
+                "-c", "features.multi_agent_v2.disable_native_tools=true",
+                "-c", store.codexDelegationConfig(for: session),
                 "-c", "developer_instructions=" + BriefingInstructions.tomlString(store.briefingText(for: session)),
             ],
             "gemini": ["--yolo"],
