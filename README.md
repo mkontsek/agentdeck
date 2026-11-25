@@ -4,6 +4,8 @@
 
 # AgentDeck
 
+AgentDeck development has ended. [Version 0.1.42](https://github.com/mkontsek/agentdeck/releases/tag/v0.1.42) is the final release.
+
 macOS 14+ · Swift / SwiftUI · MIT · [kontsek.io/agentdeck](https://kontsek.io/agentdeck)
 
 One native macOS window runs several AI agents side by side, with a shared task board and an MCP server so they coordinate without peering inside each other.
